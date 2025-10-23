@@ -13,6 +13,9 @@ class PlayingCard {
     this.isFaceUp = false,
   });
 
+  PlayingCard clone() =>
+      PlayingCard(rank: rank, suit: suit, isFaceUp: isFaceUp);
+
   // ===== Display Value =====
   String get displayValue {
     switch (rank) {

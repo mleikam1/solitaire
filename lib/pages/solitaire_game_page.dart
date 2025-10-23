@@ -259,6 +259,12 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                 _startTimerIfNeeded();
                 game.activateWand();
               },
+              onSettings: () {},
+              onUndo: game.canUndo
+                  ? () {
+                      game.undo();
+                    }
+                  : null,
               freezeCount: game.freezeCount,
               wandCount: game.wandCount,
             ),
