@@ -1,0 +1,130 @@
+# ----------------------------------------------------------------------
+# Flutter / Dart
+# ----------------------------------------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+.metadata
+
+# Generated files
+**/GeneratedPluginRegistrant.*
+**/*.g.dart
+
+# ----------------------------------------------------------------------
+# Android
+# ----------------------------------------------------------------------
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/local.properties
+android/key.properties
+*.jks
+*.keystore
+
+# ----------------------------------------------------------------------
+# iOS / macOS
+# ----------------------------------------------------------------------
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/App.framework
+ios/ServiceDefinitions.json
+ios/.generated/
+ios/DerivedData/
+ios/Runner/GeneratedPluginRegistrant.*
+macos/Flutter/ephemeral/
+macos/Pods/
+
+# ----------------------------------------------------------------------
+# Windows / Linux / Web
+# ----------------------------------------------------------------------
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+web/.dart_tool/
+web/.flutter-plugins
+
+# ----------------------------------------------------------------------
+# IDEs & Editors
+# ----------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.atom/
+.history
+.svn/
+*.swp
+*.log
+*.tmp
+*.bak
+*.orig
+*.pyc
+*.class
+
+# ----------------------------------------------------------------------
+# System files
+# ----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ----------------------------------------------------------------------
+# Firebase / Google / Secrets
+# ----------------------------------------------------------------------
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase.json
+**/firebase_app_id_file.json
+**/credentials.json
+**/serviceAccountKey.json
+**/api_keys.json
+**/keys/
+**/secrets/
+*.pem
+*.p12
+
+# ----------------------------------------------------------------------
+# Obfuscation & Symbolication
+# ----------------------------------------------------------------------
+app.*.map.json
+app.*.symbols
+
+# ----------------------------------------------------------------------
+# Coverage & Reports
+# ----------------------------------------------------------------------
+coverage/
+lcov.info
+test_output/
+reports/
+profile/
+
+# ----------------------------------------------------------------------
+# Miscellaneous
+# ----------------------------------------------------------------------
+*.lock
+*.bak
+*.old
+*.tmp
+*.swp
+migrate_working_dir/
+buildlog/
+.pubspec.lock
+
+# ----------------------------------------------------------------------
+# Node / WebFreighter / Dynamic Modules (if ever added)
+# ----------------------------------------------------------------------
+node_modules/
+dist/
+out/
+.next/
+.cache/
+.venv/
+.env
+.env.*
