@@ -121,16 +121,18 @@ class CardWidget extends StatelessWidget {
               ),
             ),
           ),
-          // Bottom-center smaller suit (moved down)
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
+          // Bottom-center large suit glyph so it doesn't overlap the corner details
+          Positioned(
+            bottom: 8,
+            left: 0,
+            right: 0,
+            child: Align(
+              alignment: Alignment.bottomCenter,
               child: Text(
                 glyph,
                 style: TextStyle(
                   color: color,
-                  fontSize: 28, // smaller now
+                  fontSize: 36,
                   fontWeight: FontWeight.w700,
                 ),
               ),
