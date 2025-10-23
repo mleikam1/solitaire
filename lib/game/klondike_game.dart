@@ -21,10 +21,14 @@ class KlondikeGame extends ChangeNotifier {
   int freezeCount = 2;
   int wandCount = 3;
 
+  final List<_GameSnapshot> _history = [];
+  static const int _historyLimit = 200;
+
   // ===== Getters used by UI =====
   int get score => _score;
   int get moves => _moves;
   List<List<PlayingCard>> get tableau => _tableau;
+  bool get canUndo => _history.isNotEmpty;
 
   PlayingCard? get stockTop => _stock.isEmpty ? null : _stock.last;
   PlayingCard? get wasteTop => _waste.isEmpty ? null : _waste.last;
@@ -40,6 +44,7 @@ class KlondikeGame extends ChangeNotifier {
 
   // ===== New Deal =====
   void newDeal() {
+    _history.clear();
     _stock.clear();
     _waste.clear();
     for (final f in _foundations) f.clear();
@@ -81,6 +86,7 @@ class KlondikeGame extends ChangeNotifier {
   // ===== Stock / Waste =====
   void drawFromStock() {
     if (_stock.isNotEmpty) {
+      _saveSnapshot();
       final c = _stock.removeLast();
       c.isFaceUp = true;
       _waste.add(c);
@@ -89,6 +95,7 @@ class KlondikeGame extends ChangeNotifier {
       return;
     }
     if (_stock.isEmpty && _waste.isNotEmpty) {
+      _saveSnapshot();
       while (_waste.isNotEmpty) {
         final c = _waste.removeLast();
         c.isFaceUp = false;
@@ -106,6 +113,7 @@ class KlondikeGame extends ChangeNotifier {
     if (tIdx != null &&
         !card.isFaceUp &&
         identical(_tableau[tIdx].last, card)) {
+      _saveSnapshot();
       card.isFaceUp = true;
       _score += 5;
       notifyListeners();
@@ -113,13 +121,13 @@ class KlondikeGame extends ChangeNotifier {
     }
 
     // Try foundation first
-    if (_tryMoveToFoundation(card)) {
+    if (_tryMoveToFoundation(card, onBeforeMove: _saveSnapshot)) {
       _moves++;
       notifyListeners();
       return;
     }
     // Then tableau
-    if (_tryMoveToTableau(card)) {
+    if (_tryMoveToTableau(card, onBeforeMove: _saveSnapshot)) {
       _moves++;
       notifyListeners();
     }
@@ -144,6 +152,7 @@ class KlondikeGame extends ChangeNotifier {
     if (!canPlaceOnTableau(dest.isEmpty ? null : dest.last, movingTop)) {
       return false;
     }
+    _saveSnapshot();
     _removeStack(stack);
     dest.addAll(stack);
     _score += 3;
@@ -154,12 +163,14 @@ class KlondikeGame extends ChangeNotifier {
   }
 
   // ===== Foundations =====
-  bool _tryMoveToFoundation(PlayingCard card) {
+  bool _tryMoveToFoundation(PlayingCard card,
+      {VoidCallback? onBeforeMove}) {
     final idx = _foundationIndexForSuit(card.suit);
     final dest = _foundations[idx];
 
     if (dest.isEmpty) {
       if (card.rank == 1) {
+        onBeforeMove?.call();
         _removeFromSource(card);
         dest.add(card);
         _score += 10;
@@ -170,6 +181,7 @@ class KlondikeGame extends ChangeNotifier {
     } else {
       final top = dest.last;
       if (top.suit == card.suit && card.rank == top.rank + 1) {
+        onBeforeMove?.call();
         _removeFromSource(card);
         dest.add(card);
         _score += 10;
@@ -181,11 +193,13 @@ class KlondikeGame extends ChangeNotifier {
   }
 
   // ===== Tableau moves (tap auto) =====
-  bool _tryMoveToTableau(PlayingCard card) {
+  bool _tryMoveToTableau(PlayingCard card,
+      {VoidCallback? onBeforeMove}) {
     final stack = _stackFrom(card);
     for (int i = 0; i < 7; i++) {
       final dest = _tableau[i];
       if (canPlaceOnTableau(dest.isEmpty ? null : dest.last, card)) {
+        onBeforeMove?.call();
         _removeStack(stack);
         dest.addAll(stack);
         _score += 3;
@@ -266,13 +280,20 @@ class KlondikeGame extends ChangeNotifier {
     if (wandCount <= 0) return;
 
     bool movedAny = false;
+    bool snapshotSaved = false;
     bool moved;
     do {
       moved = false;
 
       // waste top
       final w = wasteTop;
-      if (w != null && _tryMoveToFoundation(w)) {
+      if (w != null &&
+          _tryMoveToFoundation(w, onBeforeMove: () {
+            if (!snapshotSaved) {
+              _saveSnapshot();
+              snapshotSaved = true;
+            }
+          })) {
         moved = true;
         movedAny = true;
       }
@@ -280,7 +301,12 @@ class KlondikeGame extends ChangeNotifier {
       // tableau tops
       for (final col in _tableau) {
         if (col.isNotEmpty && col.last.isFaceUp) {
-          if (_tryMoveToFoundation(col.last)) {
+          if (_tryMoveToFoundation(col.last, onBeforeMove: () {
+            if (!snapshotSaved) {
+              _saveSnapshot();
+              snapshotSaved = true;
+            }
+          })) {
             moved = true;
             movedAny = true;
           }
@@ -294,4 +320,79 @@ class KlondikeGame extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  bool undo() {
+    if (_history.isEmpty) return false;
+    final snapshot = _history.removeLast();
+    _restoreSnapshot(snapshot);
+    notifyListeners();
+    return true;
+  }
+
+  void _saveSnapshot() {
+    _history.add(
+      _GameSnapshot(
+        stock: _clonePile(_stock),
+        waste: _clonePile(_waste),
+        tableau: _tableau.map(_clonePile).toList(),
+        foundations: _foundations.map(_clonePile).toList(),
+        score: _score,
+        moves: _moves,
+        freezeCount: freezeCount,
+        wandCount: wandCount,
+      ),
+    );
+    if (_history.length > _historyLimit) {
+      _history.removeAt(0);
+    }
+  }
+
+  List<PlayingCard> _clonePile(List<PlayingCard> source) =>
+      source.map((c) => c.clone()).toList();
+
+  void _restoreSnapshot(_GameSnapshot snapshot) {
+    _replacePile(_stock, snapshot.stock);
+    _replacePile(_waste, snapshot.waste);
+
+    for (int i = 0; i < _foundations.length; i++) {
+      _replacePile(_foundations[i], snapshot.foundations[i]);
+    }
+
+    for (int i = 0; i < _tableau.length; i++) {
+      _replacePile(_tableau[i], snapshot.tableau[i]);
+    }
+
+    _score = snapshot.score;
+    _moves = snapshot.moves;
+    freezeCount = snapshot.freezeCount;
+    wandCount = snapshot.wandCount;
+  }
+
+  void _replacePile(List<PlayingCard> target, List<PlayingCard> source) {
+    target
+      ..clear()
+      ..addAll(source.map((c) => c.clone()));
+  }
+}
+
+class _GameSnapshot {
+  final List<PlayingCard> stock;
+  final List<PlayingCard> waste;
+  final List<List<PlayingCard>> tableau;
+  final List<List<PlayingCard>> foundations;
+  final int score;
+  final int moves;
+  final int freezeCount;
+  final int wandCount;
+
+  _GameSnapshot({
+    required this.stock,
+    required this.waste,
+    required this.tableau,
+    required this.foundations,
+    required this.score,
+    required this.moves,
+    required this.freezeCount,
+    required this.wandCount,
+  });
 }
