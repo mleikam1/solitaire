@@ -42,12 +42,17 @@ class CardWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(6);
     return Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: radius,
+        border: Border.all(
+          color: Colors.black.withOpacity(0.18),
+          width: 1.4,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.2),
@@ -56,7 +61,8 @@ class CardWidget extends StatelessWidget {
           ),
         ],
       ),
-      child: card.isFaceUp ? _buildFront() : _buildBack(),
+      clipBehavior: Clip.antiAlias,
+      child: card.isFaceUp ? _buildFront() : _buildBack(radius),
     );
   }
 
@@ -144,11 +150,11 @@ class CardWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildBack() {
+  Widget _buildBack(BorderRadius radius) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF3C63FF).withOpacity(0.8),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: radius,
         border: Border.all(color: Colors.white, width: 1.2),
       ),
       child: const Center(
