@@ -215,13 +215,23 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                               game.moveStackToTableau(stack, colIdx);
                             },
                             builder: (context, candidate, rejected) {
+                              final stackHeight = column.isEmpty
+                                  ? cardHeight
+                                  : cardHeight + (column.length - 1) * 30;
+                              final isHighlighted = candidate.isNotEmpty;
+
                               return SizedBox(
                                 width: cardWidth,
+                                height: stackHeight,
                                 child: Stack(
+                                  clipBehavior: Clip.none,
                                   children: [
+                                    Positioned.fill(
+                                      child: _buildEmptySlotBox(),
+                                    ),
                                     for (int row = 0;
-                                    row < column.length;
-                                    row++)
+                                        row < column.length;
+                                        row++)
                                       Positioned(
                                         top: row * 30,
                                         child: _buildDraggableRun(
@@ -229,6 +239,21 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                                           row,
                                           cardWidth,
                                           cardHeight,
+                                        ),
+                                      ),
+                                    if (isHighlighted)
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          ignoring: true,
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                  color: Colors.yellowAccent,
+                                                  width: 2),
+                                            ),
+                                          ),
                                         ),
                                       ),
                                   ],

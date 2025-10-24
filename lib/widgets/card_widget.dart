@@ -91,45 +91,58 @@ class CardWidget extends StatelessWidget {
 
     final largeGlyphSize = min(width, height) * 0.45;
 
+    final padding = max(4.0, width * 0.14);
+    final rankFontSize = max(12.0, width * 0.45);
+    final cornerSuitFontSize = max(9.0, width * 0.32);
+    final topSpacing = max(2.0, height * 0.05);
+
     return Padding(
-      padding: const EdgeInsets.all(6.0),
+      padding: EdgeInsets.all(padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    rankText,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      rankText,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: rankFontSize,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  Text(
+                    Text(
+                      glyph,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: cornerSuitFontSize,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: Text(
                     glyph,
                     style: TextStyle(
-                      color: color,
-                      fontSize: 13,
+                      color: color.withOpacity(0.8),
+                      fontSize: cornerSuitFontSize,
                     ),
                   ),
-                ],
-              ),
-              const Spacer(),
-              Text(
-                glyph,
-                style: TextStyle(
-                  color: color.withOpacity(0.8),
-                  fontSize: 13,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: topSpacing),
           Expanded(
             child: Center(
               child: FittedBox(
