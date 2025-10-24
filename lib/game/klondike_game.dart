@@ -143,6 +143,33 @@ class KlondikeGame extends ChangeNotifier {
     return altColor && desc;
   }
 
+  bool canPlaceOnFoundation(int foundationIndex, PlayingCard moving) {
+    if (foundationIndex < 0 || foundationIndex >= _foundations.length) {
+      return false;
+    }
+    if (_foundationIndexForSuit(moving.suit) != foundationIndex) {
+      return false;
+    }
+    final dest = _foundations[foundationIndex];
+    if (dest.isEmpty) return moving.rank == 1;
+    final top = dest.last;
+    return top.suit == moving.suit && moving.rank == top.rank + 1;
+  }
+
+  bool moveCardToFoundation(PlayingCard card, int foundationIndex) {
+    if (!canPlaceOnFoundation(foundationIndex, card)) {
+      return false;
+    }
+    _saveSnapshot();
+    final sourceIdx = _removeFromSource(card);
+    _foundations[foundationIndex].add(card);
+    _score += 10;
+    _moves++;
+    _maybeFlipAfterRemoval(sourceIdx);
+    notifyListeners();
+    return true;
+  }
+
   /// Execute a stack move to a tableau column.
   /// Handles scoring, flipping, and notifying listeners.
   bool moveStackToTableau(List<PlayingCard> stack, int destCol) {
@@ -235,6 +262,10 @@ class KlondikeGame extends ChangeNotifier {
     if (_waste.isNotEmpty && identical(_waste.last, c)) {
       _waste.removeLast();
     }
+    final fIdx = _foundationIndexOf(c);
+    if (fIdx != null && identical(_foundations[fIdx].last, c)) {
+      _foundations[fIdx].removeLast();
+    }
     return null;
   }
 
@@ -249,6 +280,11 @@ class KlondikeGame extends ChangeNotifier {
     }
     if (_waste.isNotEmpty && identical(_waste.last, first)) {
       _waste.removeLast();
+    }
+    final fIdx = _foundationIndexOf(first);
+    if (fIdx != null && stack.length == 1 &&
+        identical(_foundations[fIdx].last, first)) {
+      _foundations[fIdx].removeLast();
     }
     return null;
   }
@@ -275,6 +311,13 @@ class KlondikeGame extends ChangeNotifier {
       case Suit.spades:
         return 3;
     }
+  }
+
+  int? _foundationIndexOf(PlayingCard c) {
+    for (int i = 0; i < _foundations.length; i++) {
+      if (_foundations[i].contains(c)) return i;
+    }
+    return null;
   }
 
   // ===== Power-up: Wand (auto-foundation) =====
