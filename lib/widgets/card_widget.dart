@@ -1,4 +1,7 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../models/card_model.dart';
 
 class CardWidget extends StatelessWidget {
@@ -80,60 +83,58 @@ class CardWidget extends StatelessWidget {
         rankText = card.rank.toString();
     }
 
+    final largeGlyphSize = min(width, height) * 0.45;
+
     return Padding(
-      padding: const EdgeInsets.all(4.0),
-      child: Stack(
+      padding: const EdgeInsets.all(6.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top-left rank and small suit
-          Positioned(
-            top: 4,
-            left: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  rankText,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    rankText,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
+                  Text(
+                    glyph,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                glyph,
+                style: TextStyle(
+                  color: color.withOpacity(0.8),
+                  fontSize: 13,
                 ),
-                Text(
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
                   glyph,
                   style: TextStyle(
                     color: color,
-                    fontSize: 13,
+                    fontSize: largeGlyphSize,
+                    fontWeight: FontWeight.w700,
                   ),
-                ),
-              ],
-            ),
-          ),
-          // Top-right smaller suit
-          Positioned(
-            top: 6,
-            right: 6,
-            child: Text(
-              glyph,
-              style: TextStyle(
-                color: color.withOpacity(0.8),
-                fontSize: 13,
-              ),
-            ),
-          ),
-          // Bottom-center large suit glyph so it doesn't overlap the corner details
-          Positioned(
-            bottom: 8,
-            left: 0,
-            right: 0,
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Text(
-                glyph,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 36,
-                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),

@@ -153,11 +153,11 @@ class KlondikeGame extends ChangeNotifier {
       return false;
     }
     _saveSnapshot();
-    _removeStack(stack);
+    final sourceIdx = _removeStack(stack);
     dest.addAll(stack);
     _score += 3;
     _moves++;
-    _maybeFlipAfterRemoval(stack.first);
+    _maybeFlipAfterRemoval(sourceIdx);
     notifyListeners();
     return true;
   }
@@ -171,10 +171,10 @@ class KlondikeGame extends ChangeNotifier {
     if (dest.isEmpty) {
       if (card.rank == 1) {
         onBeforeMove?.call();
-        _removeFromSource(card);
+        final sourceIdx = _removeFromSource(card);
         dest.add(card);
         _score += 10;
-        _maybeFlipAfterRemoval(card);
+        _maybeFlipAfterRemoval(sourceIdx);
         return true;
       }
       return false;
@@ -182,10 +182,10 @@ class KlondikeGame extends ChangeNotifier {
       final top = dest.last;
       if (top.suit == card.suit && card.rank == top.rank + 1) {
         onBeforeMove?.call();
-        _removeFromSource(card);
+        final sourceIdx = _removeFromSource(card);
         dest.add(card);
         _score += 10;
-        _maybeFlipAfterRemoval(card);
+        _maybeFlipAfterRemoval(sourceIdx);
         return true;
       }
     }
@@ -200,10 +200,10 @@ class KlondikeGame extends ChangeNotifier {
       final dest = _tableau[i];
       if (canPlaceOnTableau(dest.isEmpty ? null : dest.last, card)) {
         onBeforeMove?.call();
-        _removeStack(stack);
+        final sourceIdx = _removeStack(stack);
         dest.addAll(stack);
         _score += 3;
-        _maybeFlipAfterRemoval(card);
+        _maybeFlipAfterRemoval(sourceIdx);
         return true;
       }
     }
@@ -226,32 +226,34 @@ class KlondikeGame extends ChangeNotifier {
     return List<PlayingCard>.from(col.getRange(start, col.length));
   }
 
-  void _removeFromSource(PlayingCard c) {
+  int? _removeFromSource(PlayingCard c) {
     final tIdx = _tableauIndexOf(c);
     if (tIdx != null) {
       _tableau[tIdx].remove(c);
-      return;
+      return tIdx;
     }
     if (_waste.isNotEmpty && identical(_waste.last, c)) {
       _waste.removeLast();
     }
+    return null;
   }
 
-  void _removeStack(List<PlayingCard> stack) {
+  int? _removeStack(List<PlayingCard> stack) {
     final first = stack.first;
     final tIdx = _tableauIndexOf(first);
     if (tIdx != null) {
       final col = _tableau[tIdx];
-      col.removeRange(col.indexOf(first), col.indexOf(first) + stack.length);
-      return;
+      final start = col.indexOf(first);
+      col.removeRange(start, start + stack.length);
+      return tIdx;
     }
     if (_waste.isNotEmpty && identical(_waste.last, first)) {
       _waste.removeLast();
     }
+    return null;
   }
 
-  void _maybeFlipAfterRemoval(PlayingCard removedTop) {
-    final tIdx = _tableauIndexOf(removedTop);
+  void _maybeFlipAfterRemoval(int? tIdx) {
     if (tIdx == null) return;
     final col = _tableau[tIdx];
     if (col.isNotEmpty && !col.last.isFaceUp) {
