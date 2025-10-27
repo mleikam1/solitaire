@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import '../models/card_model.dart';
@@ -27,6 +29,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   bool _isFreezeActive = false;
   int _freezeCountdown = 0;
   Timer? _freezeTimer;
+  final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
+  final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
 
   @override
   void initState() {
@@ -224,6 +228,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                               final isHighlighted = candidate.isNotEmpty;
 
                               return SizedBox(
+                                key: _tableauKeys[colIdx],
                                 width: cardWidth,
                                 height: stackHeight,
                                 child: Stack(
@@ -335,6 +340,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         childWhenDragging:
             SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
         onDragStarted: _startTimerIfNeeded,
+        onDragEnd: (details) {
+          if (!details.wasAccepted) {
+            _handleDragEnd([card], details, w, h);
+          }
+        },
         dragAnchorStrategy: childDragAnchorStrategy,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -363,6 +373,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         final card = game.foundationTop(index);
         final highlight = candidate.isNotEmpty;
         return SizedBox(
+          key: _foundationKeys[index],
           width: w,
           height: h,
           child: Stack(
@@ -391,6 +402,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       feedback: _buildDragFeedback([card], w, h),
       childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
       onDragStarted: _startTimerIfNeeded,
+      onDragEnd: (details) {
+        if (!details.wasAccepted) {
+          _handleDragEnd([card], details, w, h);
+        }
+      },
       dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -441,6 +457,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       feedback: _buildDragFeedback(stack, w, h),
       childWhenDragging: SizedBox(width: w, height: h),
       onDragStarted: _startTimerIfNeeded,
+      onDragEnd: (details) {
+        if (!details.wasAccepted) {
+          _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
+        }
+      },
       dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
         onTap: () {
@@ -451,4 +472,110 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       ),
     );
   }
+
+  void _handleDragEnd(List<PlayingCard> stack, DraggableDetails details,
+      double cardWidth, double cardHeight) {
+    if (stack.isEmpty) return;
+    final dropPoint =
+        details.offset + Offset(cardWidth / 2, cardHeight / 2);
+    final moved =
+        _autoSnapStack(stack, dropPoint, cardWidth, cardHeight);
+    if (!moved) {
+      setState(() {});
+    }
+  }
+
+  bool _autoSnapStack(List<PlayingCard> stack, Offset dropPoint,
+      double cardWidth, double cardHeight) {
+    if (stack.isEmpty) return false;
+    final topCard = stack.first;
+    final tolerance = math.max(24.0, cardWidth * 0.35);
+    final maxDistance = math.max(cardWidth, cardHeight) * 0.75;
+
+    _AutoDropTarget? bestTarget;
+
+    for (int i = 0; i < _tableauKeys.length; i++) {
+      final rect = _getGlobalRect(_tableauKeys[i]);
+      if (rect == null) continue;
+      final expanded = rect.inflate(tolerance);
+      final column = game.tableau[i];
+      if (!game.canPlaceOnTableau(
+          column.isEmpty ? null : column.last, topCard)) {
+        continue;
+      }
+      final distance = _distanceToRect(expanded, dropPoint);
+      if (distance <= maxDistance &&
+          (bestTarget == null || distance < bestTarget.distance)) {
+        bestTarget =
+            _AutoDropTarget(_AutoDropType.tableau, i, distance);
+      }
+    }
+
+    if (stack.length == 1) {
+      for (int i = 0; i < _foundationKeys.length; i++) {
+        if (!game.canPlaceOnFoundation(i, topCard)) {
+          continue;
+        }
+        final rect = _getGlobalRect(_foundationKeys[i]);
+        if (rect == null) continue;
+        final expanded = rect.inflate(tolerance);
+        final distance = _distanceToRect(expanded, dropPoint);
+        if (distance <= maxDistance &&
+            (bestTarget == null || distance < bestTarget.distance)) {
+          bestTarget =
+              _AutoDropTarget(_AutoDropType.foundation, i, distance);
+        }
+      }
+    }
+
+    if (bestTarget == null) {
+      return false;
+    }
+
+    switch (bestTarget.type) {
+      case _AutoDropType.tableau:
+        final moved = game.moveStackToTableau(
+            List<PlayingCard>.from(stack), bestTarget.index);
+        if (moved) {
+          _startTimerIfNeeded();
+        }
+        return moved;
+      case _AutoDropType.foundation:
+        final moved =
+            game.moveCardToFoundation(stack.first, bestTarget.index);
+        if (moved) {
+          _startTimerIfNeeded();
+        }
+        return moved;
+    }
+  }
+
+  Rect? _getGlobalRect(GlobalKey key) {
+    final context = key.currentContext;
+    if (context == null) return null;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox) return null;
+    final offset = renderObject.localToGlobal(Offset.zero);
+    return offset & renderObject.size;
+  }
+
+  double _distanceToRect(Rect rect, Offset point) {
+    final dx = point.dx < rect.left
+        ? rect.left - point.dx
+        : (point.dx > rect.right ? point.dx - rect.right : 0.0);
+    final dy = point.dy < rect.top
+        ? rect.top - point.dy
+        : (point.dy > rect.bottom ? point.dy - rect.bottom : 0.0);
+    return math.sqrt(dx * dx + dy * dy);
+  }
 }
+
+class _AutoDropTarget {
+  const _AutoDropTarget(this.type, this.index, this.distance);
+
+  final _AutoDropType type;
+  final int index;
+  final double distance;
+}
+
+enum _AutoDropType { tableau, foundation }

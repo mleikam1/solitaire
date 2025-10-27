@@ -96,89 +96,84 @@ class CardWidget extends StatelessWidget {
         final padding = max(4.0, maxWidth * 0.12);
         final innerWidth = max(1.0, maxWidth - padding * 2);
         final innerHeight = max(1.0, maxHeight - padding * 2);
-        final largeGlyphSize = min(innerWidth, innerHeight) * 0.55;
+        final largeGlyphSize = min(innerWidth, innerHeight) * 0.58;
         final isWideRank = rankText.length > 1;
         final rankFontSize =
             max(10.0, innerWidth * (isWideRank ? 0.55 : 0.7));
         final cornerSuitFontSize = max(9.0, innerWidth * 0.45);
-        final topSpacing = max(4.0, innerHeight * 0.08);
-        final cornerBoxWidth = max(innerWidth * 0.45, 18.0);
+        final cornerBoxWidth = max(innerWidth * 0.42, 16.0);
+        final topInset = innerHeight * 0.04;
 
         return Padding(
           padding: EdgeInsets.all(padding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: cornerBoxWidth,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        FittedBox(
-                          alignment: Alignment.topLeft,
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            rankText,
-                            style: TextStyle(
-                              color: color,
-                              fontSize: rankFontSize,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        FittedBox(
-                          alignment: Alignment.topLeft,
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            glyph,
-                            style: TextStyle(
-                              color: color,
-                              fontSize: cornerSuitFontSize,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.topRight,
-                      child: SizedBox(
-                        width: cornerBoxWidth,
-                        child: FittedBox(
-                          alignment: Alignment.topRight,
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            glyph,
-                            style: TextStyle(
-                              color: color.withOpacity(0.8),
-                              fontSize: cornerSuitFontSize,
-                            ),
+              Positioned(
+                top: topInset,
+                left: 0,
+                child: SizedBox(
+                  width: cornerBoxWidth,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      FittedBox(
+                        alignment: Alignment.topLeft,
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          rankText,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: rankFontSize,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        alignment: Alignment.topLeft,
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          glyph,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: cornerSuitFontSize,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-              SizedBox(height: topSpacing),
-              Expanded(
-                child: Center(
+              Positioned(
+                top: topInset,
+                right: 0,
+                child: SizedBox(
+                  width: cornerBoxWidth,
                   child: FittedBox(
+                    alignment: Alignment.topRight,
                     fit: BoxFit.scaleDown,
                     child: Text(
                       glyph,
                       style: TextStyle(
-                        color: color,
-                        fontSize: largeGlyphSize,
-                        fontWeight: FontWeight.w700,
+                        color: color.withOpacity(0.8),
+                        fontSize: cornerSuitFontSize,
                       ),
+                    ),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.center,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    glyph,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: largeGlyphSize,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
