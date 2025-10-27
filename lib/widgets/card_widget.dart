@@ -89,77 +89,104 @@ class CardWidget extends StatelessWidget {
         rankText = card.rank.toString();
     }
 
-    final largeGlyphSize = min(width, height) * 0.45;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final maxHeight = constraints.maxHeight;
+        final padding = max(4.0, maxWidth * 0.12);
+        final innerWidth = max(1.0, maxWidth - padding * 2);
+        final innerHeight = max(1.0, maxHeight - padding * 2);
+        final largeGlyphSize = min(innerWidth, innerHeight) * 0.55;
+        final isWideRank = rankText.length > 1;
+        final rankFontSize =
+            max(10.0, innerWidth * (isWideRank ? 0.55 : 0.7));
+        final cornerSuitFontSize = max(9.0, innerWidth * 0.45);
+        final topSpacing = max(4.0, innerHeight * 0.08);
+        final cornerBoxWidth = max(innerWidth * 0.45, 18.0);
 
-    final padding = max(4.0, width * 0.14);
-    final rankFontSize = max(12.0, width * 0.45);
-    final cornerSuitFontSize = max(9.0, width * 0.32);
-    final topSpacing = max(2.0, height * 0.05);
-
-    return Padding(
-      padding: EdgeInsets.all(padding),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+        return Padding(
+          padding: EdgeInsets.all(padding),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      rankText,
-                      style: TextStyle(
-                        color: color,
-                        fontSize: rankFontSize,
-                        fontWeight: FontWeight.bold,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: cornerBoxWidth,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        FittedBox(
+                          alignment: Alignment.topLeft,
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            rankText,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: rankFontSize,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        FittedBox(
+                          alignment: Alignment.topLeft,
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            glyph,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: cornerSuitFontSize,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: SizedBox(
+                        width: cornerBoxWidth,
+                        child: FittedBox(
+                          alignment: Alignment.topRight,
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            glyph,
+                            style: TextStyle(
+                              color: color.withOpacity(0.8),
+                              fontSize: cornerSuitFontSize,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    Text(
+                  ),
+                ],
+              ),
+              SizedBox(height: topSpacing),
+              Expanded(
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
                       glyph,
                       style: TextStyle(
                         color: color,
-                        fontSize: cornerSuitFontSize,
+                        fontSize: largeGlyphSize,
+                        fontWeight: FontWeight.w700,
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topRight,
-                  child: Text(
-                    glyph,
-                    style: TextStyle(
-                      color: color.withOpacity(0.8),
-                      fontSize: cornerSuitFontSize,
                     ),
                   ),
                 ),
               ),
             ],
           ),
-          SizedBox(height: topSpacing),
-          Expanded(
-            child: Center(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  glyph,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: largeGlyphSize,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
