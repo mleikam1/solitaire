@@ -211,8 +211,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                             },
                             onAcceptWithDetails: (details) {
                               _startTimerIfNeeded();
-                              final stack = details.data;
-                              game.moveStackToTableau(stack, colIdx);
+                              final stack = List<PlayingCard>.from(details.data);
+                              final moved = game.moveStackToTableau(stack, colIdx);
+                              if (!moved) {
+                                setState(() {});
+                              }
                             },
                             builder: (context, candidate, rejected) {
                               final stackHeight = column.isEmpty
@@ -332,6 +335,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         childWhenDragging:
             SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
         onDragStarted: _startTimerIfNeeded,
+        dragAnchorStrategy: childDragAnchorStrategy,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
@@ -387,6 +391,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       feedback: _buildDragFeedback([card], w, h),
       childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
       onDragStarted: _startTimerIfNeeded,
+      dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
@@ -408,13 +413,15 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildDragFeedback(List<PlayingCard> stack, double w, double h) {
-    return Material(
-      color: Colors.transparent,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final c in stack) CardWidget(card: c, width: w, height: h),
-        ],
+    return IgnorePointer(
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final c in stack) CardWidget(card: c, width: w, height: h),
+          ],
+        ),
       ),
     );
   }
@@ -432,11 +439,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     return Draggable<List<PlayingCard>>(
       data: stack,
       feedback: _buildDragFeedback(stack, w, h),
-      childWhenDragging: Opacity(
-        opacity: 0.0,
-        child: CardWidget(card: card, width: w, height: h),
-      ),
+      childWhenDragging: SizedBox(width: w, height: h),
       onDragStarted: _startTimerIfNeeded,
+      dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
         onTap: () {
           _startTimerIfNeeded();
