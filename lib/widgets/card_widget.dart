@@ -96,7 +96,7 @@ class CardWidget extends StatelessWidget {
         final padding = max(4.0, maxWidth * 0.12);
         final innerWidth = max(1.0, maxWidth - padding * 2);
         final innerHeight = max(1.0, maxHeight - padding * 2);
-        final largeGlyphSize = min(innerWidth, innerHeight) * 0.58;
+        final centerGlyphSize = min(innerWidth, innerHeight) * 0.34;
         final isWideRank = rankText.length > 1;
         final rankFontSize =
             max(10.0, innerWidth * (isWideRank ? 0.55 : 0.7));
@@ -166,14 +166,24 @@ class CardWidget extends StatelessWidget {
               ),
               Align(
                 alignment: Alignment.center,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    glyph,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: largeGlyphSize,
-                      fontWeight: FontWeight.w700,
+                child: Container(
+                  width: centerGlyphSize,
+                  height: centerGlyphSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color.withOpacity(0.08),
+                  ),
+                  child: Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        glyph,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: centerGlyphSize * 0.7,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
                 ),
