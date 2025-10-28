@@ -359,11 +359,71 @@ class KlondikeGame extends ChangeNotifier {
       }
     } while (moved);
 
+    if (!movedAny) {
+      movedAny = _forceAdvantageMove(() {
+        if (!snapshotSaved) {
+          _saveSnapshot();
+          snapshotSaved = true;
+        }
+      });
+    }
+
     if (movedAny) {
+      if (!snapshotSaved) {
+        _saveSnapshot();
+        snapshotSaved = true;
+      }
       wandCount--;
       _moves++;
       notifyListeners();
     }
+  }
+
+  bool _forceAdvantageMove(VoidCallback ensureSnapshot) {
+    // Try to sneak a useful card from the stock directly onto the foundation.
+    for (int i = _stock.length - 1; i >= 0; i--) {
+      final candidate = _stock[i];
+      final foundationIndex = _foundationIndexForSuit(candidate.suit);
+      if (canPlaceOnFoundation(foundationIndex, candidate)) {
+        ensureSnapshot();
+        final card = _stock.removeAt(i);
+        card.isFaceUp = true;
+        _foundations[foundationIndex].add(card);
+        _score += 10;
+        return true;
+      }
+    }
+
+    // If a tableau column still has a hidden card on top, reveal it.
+    for (final column in _tableau) {
+      if (column.isNotEmpty && !column.last.isFaceUp) {
+        ensureSnapshot();
+        column.last.isFaceUp = true;
+        _score += 5;
+        return true;
+      }
+    }
+
+    // Otherwise draw from the stock or recycle the waste to keep the game moving.
+    if (_stock.isNotEmpty) {
+      ensureSnapshot();
+      final card = _stock.removeLast();
+      card.isFaceUp = true;
+      _waste.add(card);
+      return true;
+    }
+
+    if (_stock.isEmpty && _waste.isNotEmpty) {
+      ensureSnapshot();
+      while (_waste.isNotEmpty) {
+        final card = _waste.removeLast();
+        card.isFaceUp = false;
+        _stock.add(card);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   HintSuggestion? computeHint() => _computeHint();
