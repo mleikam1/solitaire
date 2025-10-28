@@ -126,7 +126,10 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         setState(() => _freezeCountdown--);
       } else {
         t.cancel();
-        setState(() => _isFreezeActive = false);
+        setState(() {
+          _isFreezeActive = false;
+          _freezeCountdown = 0;
+        });
         _resumeTimer();
       }
     });
@@ -205,8 +208,25 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Time: ${_formatTime()}',
-                      style: const TextStyle(color: Colors.white, fontSize: 18)),
+                  Row(
+                    children: [
+                      Text('Time: ${_formatTime()}',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 18)),
+                      if (_isFreezeActive)
+                        Row(
+                          children: [
+                            const SizedBox(width: 8),
+                            const Icon(Icons.timer,
+                                color: Colors.white, size: 20),
+                            const SizedBox(width: 4),
+                            Text('$_freezeCountdown',
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 18)),
+                          ],
+                        ),
+                    ],
+                  ),
                   Text('Score: ${game.score}',
                       style: const TextStyle(color: Colors.white, fontSize: 18)),
                   Text('Moves: ${game.moves}',
@@ -356,14 +376,6 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
               wandCount: game.wandCount,
               hintAvailable: hintAvailable,
             ),
-            if (_isFreezeActive)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 80),
-                child: Text(
-                  'Freeze ends in $_freezeCountdown',
-                  style: const TextStyle(color: Colors.white, fontSize: 18),
-                ),
-              ),
           ],
         ),
       ),
