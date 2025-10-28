@@ -366,6 +366,136 @@ class KlondikeGame extends ChangeNotifier {
     }
   }
 
+  HintSuggestion? computeHint() => _computeHint();
+
+  bool get hasHintAvailable => _computeHint(previewOnly: true) != null;
+
+  HintSuggestion? _computeHint({bool previewOnly = false}) {
+    HintSuggestion _buildResult(
+      HintActionType action, {
+      List<PlayingCard> cards = const <PlayingCard>[],
+      int? sourceTableau,
+      int? destinationTableau,
+      int? destinationFoundation,
+      bool highlightStock = false,
+    }) {
+      if (previewOnly) {
+        return HintSuggestion(
+          action: action,
+          sourceTableauIndex: sourceTableau,
+          destinationTableauIndex: destinationTableau,
+          destinationFoundationIndex: destinationFoundation,
+          highlightStock: highlightStock,
+        );
+      }
+      return HintSuggestion(
+        action: action,
+        cards: cards,
+        sourceTableauIndex: sourceTableau,
+        destinationTableauIndex: destinationTableau,
+        destinationFoundationIndex: destinationFoundation,
+        highlightStock: highlightStock,
+      );
+    }
+
+    final wasteCard = wasteTop;
+    if (wasteCard != null) {
+      final foundationIndex = _foundationIndexForSuit(wasteCard.suit);
+      if (canPlaceOnFoundation(foundationIndex, wasteCard)) {
+        final cards =
+            previewOnly ? const <PlayingCard>[] : <PlayingCard>[wasteCard];
+        return _buildResult(
+          HintActionType.moveToFoundation,
+          cards: cards,
+          destinationFoundation: foundationIndex,
+        );
+      }
+    }
+
+    for (int i = 0; i < _tableau.length; i++) {
+      final column = _tableau[i];
+      if (column.isEmpty) continue;
+      final top = column.last;
+      if (!top.isFaceUp) continue;
+      final foundationIndex = _foundationIndexForSuit(top.suit);
+      if (canPlaceOnFoundation(foundationIndex, top)) {
+        final cards =
+            previewOnly ? const <PlayingCard>[] : <PlayingCard>[top];
+        return _buildResult(
+          HintActionType.moveToFoundation,
+          cards: cards,
+          sourceTableau: i,
+          destinationFoundation: foundationIndex,
+        );
+      }
+    }
+
+    for (int i = 0; i < _tableau.length; i++) {
+      final column = _tableau[i];
+      if (column.isNotEmpty && !column.last.isFaceUp) {
+        final facedown = column.last;
+        final cards =
+            previewOnly ? const <PlayingCard>[] : <PlayingCard>[facedown];
+        return _buildResult(
+          HintActionType.flipTableauCard,
+          cards: cards,
+          sourceTableau: i,
+        );
+      }
+    }
+
+    if (wasteCard != null) {
+      for (int dest = 0; dest < _tableau.length; dest++) {
+        final destPile = _tableau[dest];
+        if (canPlaceOnTableau(
+            destPile.isEmpty ? null : destPile.last, wasteCard)) {
+          final cards =
+              previewOnly ? const <PlayingCard>[] : <PlayingCard>[wasteCard];
+          return _buildResult(
+            HintActionType.moveToTableau,
+            cards: cards,
+            destinationTableau: dest,
+          );
+        }
+      }
+    }
+
+    for (int src = 0; src < _tableau.length; src++) {
+      final column = _tableau[src];
+      for (int row = 0; row < column.length; row++) {
+        final card = column[row];
+        if (!card.isFaceUp) continue;
+        final stack = column.sublist(row);
+        final movingTop = stack.first;
+        for (int dest = 0; dest < _tableau.length; dest++) {
+          if (dest == src) continue;
+          final destPile = _tableau[dest];
+          if (canPlaceOnTableau(
+              destPile.isEmpty ? null : destPile.last, movingTop)) {
+            final cards = previewOnly
+                ? const <PlayingCard>[]
+                : List<PlayingCard>.from(stack);
+            return _buildResult(
+              HintActionType.moveToTableau,
+              cards: cards,
+              sourceTableau: src,
+              destinationTableau: dest,
+            );
+          }
+        }
+      }
+    }
+
+    if (_stock.isNotEmpty || _waste.isNotEmpty) {
+      return _buildResult(
+        HintActionType.drawFromStock,
+        highlightStock: true,
+      );
+    }
+
+    return null;
+  }
+
   bool undo() {
     if (_history.isEmpty) return false;
     final snapshot = _history.removeLast();
@@ -440,4 +570,29 @@ class _GameSnapshot {
     required this.freezeCount,
     required this.wandCount,
   });
+}
+
+class HintSuggestion {
+  HintSuggestion({
+    required this.action,
+    List<PlayingCard> cards = const <PlayingCard>[],
+    this.sourceTableauIndex,
+    this.destinationTableauIndex,
+    this.destinationFoundationIndex,
+    this.highlightStock = false,
+  }) : cards = List<PlayingCard>.unmodifiable(cards);
+
+  final HintActionType action;
+  final List<PlayingCard> cards;
+  final int? sourceTableauIndex;
+  final int? destinationTableauIndex;
+  final int? destinationFoundationIndex;
+  final bool highlightStock;
+}
+
+enum HintActionType {
+  flipTableauCard,
+  moveToFoundation,
+  moveToTableau,
+  drawFromStock,
 }

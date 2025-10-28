@@ -29,6 +29,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   bool _isFreezeActive = false;
   int _freezeCountdown = 0;
   Timer? _freezeTimer;
+  Timer? _hintTimer;
+  HintSuggestion? _activeHint;
+  Set<PlayingCard> _hintCards = <PlayingCard>{};
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
   final GlobalKey _foundationRowKey = GlobalKey();
@@ -42,7 +45,14 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     game.addListener(_onGameChanged);
   }
 
-  void _onGameChanged() => setState(() {});
+  void _onGameChanged() {
+    _hintTimer?.cancel();
+    _hintTimer = null;
+    setState(() {
+      _activeHint = null;
+      _hintCards = <PlayingCard>{};
+    });
+  }
 
   void _loadAd() {
     _bannerAd = BannerAd(
@@ -103,7 +113,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       _isFreezeActive = true;
       _freezeCountdown = 10;
       game.freezeCount--;
+      _activeHint = null;
+      _hintCards = <PlayingCard>{};
     });
+    _hintTimer?.cancel();
+    _hintTimer = null;
     _pauseTimer();
 
     _freezeTimer?.cancel();
@@ -115,6 +129,35 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         setState(() => _isFreezeActive = false);
         _resumeTimer();
       }
+    });
+  }
+
+  void _showHint() {
+    final hint = game.computeHint();
+    if (hint == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('No hints available right now.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      return;
+    }
+
+    _hintTimer?.cancel();
+    setState(() {
+      _activeHint = hint;
+      _hintCards = hint.cards.toSet();
+    });
+    _hintTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() {
+        _activeHint = null;
+        _hintCards = <PlayingCard>{};
+      });
     });
   }
 
@@ -134,6 +177,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _freezeTimer?.cancel();
+    _hintTimer?.cancel();
     _bannerAd?.dispose();
     game.removeListener(_onGameChanged);
     super.dispose();
@@ -143,6 +187,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Widget build(BuildContext context) {
     final cardWidth = MediaQuery.of(context).size.width / 8.5;
     final cardHeight = cardWidth * 1.4;
+    final hintAvailable = game.hasHintAvailable;
 
     return Scaffold(
       backgroundColor: const Color(0xFF006400),
@@ -228,6 +273,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                                   ? cardHeight
                                   : cardHeight + (column.length - 1) * 30;
                               final isHighlighted = candidate.isNotEmpty;
+                              final isHintTarget =
+                                  _activeHint?.destinationTableauIndex == colIdx;
 
                               return SizedBox(
                                 key: _tableauKeys[colIdx],
@@ -250,6 +297,10 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                                           cardWidth,
                                           cardHeight,
                                         ),
+                                      ),
+                                    if (isHintTarget)
+                                      Positioned.fill(
+                                        child: _buildHintOverlay(),
                                       ),
                                     if (isHighlighted)
                                       Positioned.fill(
@@ -280,14 +331,21 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
             ),
             BottomToolbar(
               onNewDeal: () {
+                _hintTimer?.cancel();
+                _hintTimer = null;
+                _activeHint = null;
+                _hintCards = <PlayingCard>{};
                 _resetTimer();
                 game.newDeal();
               },
-              onFreeze: _activateFreeze,
-              onWand: () {
-                _startTimerIfNeeded();
-                game.activateWand();
-              },
+              onFreeze: game.freezeCount > 0 ? _activateFreeze : null,
+              onWand: game.wandCount > 0
+                  ? () {
+                      _startTimerIfNeeded();
+                      game.activateWand();
+                    }
+                  : null,
+              onHint: _showHint,
               onSettings: () {},
               onUndo: game.canUndo
                   ? () {
@@ -296,6 +354,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                   : null,
               freezeCount: game.freezeCount,
               wandCount: game.wandCount,
+              hintAvailable: hintAvailable,
             ),
             if (_isFreezeActive)
               Padding(
@@ -314,16 +373,31 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   // ===== UI helpers =====
   Widget _buildStockSlot(double w, double h) {
     final card = game.stockTop;
+    final bool highlightStock = _activeHint?.highlightStock ?? false;
+
+    final Widget content = card != null
+        ? _buildHintableCard(card, w, h)
+        : _buildEmptySlotBox();
+
     return SizedBox(
       width: w,
       height: h,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          _startTimerIfNeeded();
-          game.drawFromStock();
-        },
-        child: card != null ? CardWidget(card: card, width: w, height: h) : _buildEmptySlotBox(),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              _startTimerIfNeeded();
+              game.drawFromStock();
+            },
+            child: SizedBox.expand(child: content),
+          ),
+          if (highlightStock)
+            Positioned.fill(
+              child: _buildHintOverlay(),
+            ),
+        ],
       ),
     );
   }
@@ -354,7 +428,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
             _startTimerIfNeeded();
             game.tapCard(card);
           },
-          child: CardWidget(card: card, width: w, height: h),
+          child: _buildHintableCard(card, w, h),
         ),
       ),
     );
@@ -374,6 +448,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       builder: (context, candidate, rejected) {
         final card = game.foundationTop(index);
         final highlight = candidate.isNotEmpty;
+        final isHintTarget =
+            _activeHint?.destinationFoundationIndex == index;
         return SizedBox(
           key: _foundationKeys[index],
           width: w,
@@ -384,6 +460,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
               _buildEmptySlotBox(),
               if (card != null)
                 Center(child: _buildFoundationDraggable(card, w, h)),
+              if (isHintTarget) _buildHintOverlay(),
               if (highlight)
                 Container(
                   decoration: BoxDecoration(
@@ -416,7 +493,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
           _startTimerIfNeeded();
           game.tapCard(card);
         },
-        child: CardWidget(card: card, width: w, height: h),
+        child: _buildHintableCard(card, w, h),
       ),
     );
   }
@@ -444,12 +521,70 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     );
   }
 
+  Widget _buildHintableCard(PlayingCard card, double w, double h) {
+    final bool highlight = _hintCards.contains(card);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: highlight
+            ? [
+                BoxShadow(
+                  color: Colors.yellowAccent.withOpacity(0.45),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CardWidget(card: card, width: w, height: h),
+          if (highlight)
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: true,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.yellowAccent, width: 3),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHintOverlay({double radius = 6}) {
+    return IgnorePointer(
+      ignoring: true,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: Colors.yellowAccent, width: 3),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.yellowAccent.withOpacity(0.55),
+              blurRadius: 14,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Builds a Draggable run starting from [row] to end of [column] (if face-up).
   Widget _buildDraggableRun(
       List<PlayingCard> column, int row, double w, double h) {
     final card = column[row];
     if (!card.isFaceUp) {
-      return CardWidget(card: card, width: w, height: h);
+      return _buildHintableCard(card, w, h);
     }
 
     final stack = column.sublist(row); // inclusive stack (run)
@@ -470,7 +605,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
           _startTimerIfNeeded();
           game.tapCard(card);
         },
-        child: CardWidget(card: card, width: w, height: h),
+        child: _buildHintableCard(card, w, h),
       ),
     );
   }
