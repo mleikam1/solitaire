@@ -31,6 +31,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Timer? _freezeTimer;
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
+  final GlobalKey _foundationRowKey = GlobalKey();
 
   @override
   void initState() {
@@ -185,6 +186,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                           ],
                         ),
                         Row(
+                          key: _foundationRowKey,
                           children: List.generate(
                             4,
                             (i) => Padding(
@@ -524,6 +526,21 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
             (bestTarget == null || distance < bestTarget.distance)) {
           bestTarget =
               _AutoDropTarget(_AutoDropType.foundation, i, distance);
+        }
+      }
+    }
+
+    if (bestTarget == null && stack.length == 1) {
+      final rowRect = _getGlobalRect(_foundationRowKey);
+      if (rowRect != null) {
+        final expandedRow = rowRect.inflate(tolerance);
+        if (expandedRow.contains(dropPoint)) {
+          for (int i = 0; i < _foundationKeys.length; i++) {
+            if (game.canPlaceOnFoundation(i, topCard)) {
+              bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, 0);
+              break;
+            }
+          }
         }
       }
     }
