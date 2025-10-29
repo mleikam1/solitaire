@@ -137,10 +137,8 @@ class KlondikeGame extends ChangeNotifier {
 
   /// Rule check for placing [movingTop] (top of a stack) onto [destTop] (may be null).
   bool canPlaceOnTableau(PlayingCard? destTop, PlayingCard movingTop) {
-    if (destTop == null) return movingTop.rank == 13; // King on empty
-    final altColor = _isRed(destTop.suit) != _isRed(movingTop.suit);
-    final desc = movingTop.rank == destTop.rank - 1;
-    return altColor && desc;
+    if (destTop == null) return true; // Relaxed: any card can fill an empty column.
+    return movingTop.rank == destTop.rank - 1; // Relaxed: only descending order required.
   }
 
   bool canPlaceOnFoundation(int foundationIndex, PlayingCard moving) {
