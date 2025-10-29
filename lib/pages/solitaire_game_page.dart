@@ -17,7 +17,7 @@ class SolitaireGamePage extends StatefulWidget {
 }
 
 class _SolitaireGamePageState extends State<SolitaireGamePage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   final KlondikeGame game = KlondikeGame();
   BannerAd? _bannerAd;
 
@@ -35,6 +35,10 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
   final GlobalKey _foundationRowKey = GlobalKey();
+  final GlobalKey _stockKey = GlobalKey();
+  final GlobalKey _wasteKey = GlobalKey();
+
+  bool _isWandAnimating = false;
 
   @override
   void initState() {
@@ -162,6 +166,52 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         _hintCards = <PlayingCard>{};
       });
     });
+  }
+
+  Future<void> _handleWandPressed(double cardWidth, double cardHeight) async {
+    if (_isWandAnimating) return;
+
+    final plan = game.planMagicWand();
+    if (plan == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('No magic moves available right now.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      return;
+    }
+
+    _startTimerIfNeeded();
+
+    if (!mounted) return;
+    setState(() {
+      _isWandAnimating = true;
+    });
+
+    try {
+      await _animateWandPlan(plan, cardWidth, cardHeight);
+      if (!mounted) return;
+      final success = game.executeMagicWand(plan);
+      if (!success) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Magic wand could not find a valid move.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+      }
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isWandAnimating = false;
+      });
+    }
   }
 
   @override
@@ -359,11 +409,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                 game.newDeal();
               },
               onFreeze: game.freezeCount > 0 ? _activateFreeze : null,
-              onWand: game.wandCount > 0
-                  ? () {
-                      _startTimerIfNeeded();
-                      game.activateWand();
-                    }
+              onWand: (game.wandCount > 0 && !_isWandAnimating)
+                  ? () => _handleWandPressed(cardWidth, cardHeight)
                   : null,
               onHint: _showHint,
               onSettings: () {},
@@ -392,6 +439,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         : _buildEmptySlotBox();
 
     return SizedBox(
+      key: _stockKey,
       width: w,
       height: h,
       child: Stack(
@@ -417,9 +465,15 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Widget _buildWasteSlot(double w, double h) {
     final card = game.wasteTop;
     if (card == null) {
-      return SizedBox(width: w, height: h, child: _buildEmptySlotBox());
+      return SizedBox(
+        key: _wasteKey,
+        width: w,
+        height: h,
+        child: _buildEmptySlotBox(),
+      );
     }
     return SizedBox(
+      key: _wasteKey,
       width: w,
       height: h,
       child: Draggable<List<PlayingCard>>(
@@ -712,6 +766,118 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         }
         return moved;
     }
+  }
+
+  Future<void> _animateWandPlan(
+      MagicWandPlan plan, double cardWidth, double cardHeight) async {
+    for (final action in plan.actions) {
+      final from = action.from;
+      final to = action.to;
+      if (from == null || to == null || action.cards.isEmpty) continue;
+      await _animateWandAction(action, cardWidth, cardHeight);
+      if (!mounted) return;
+      await Future.delayed(const Duration(milliseconds: 120));
+    }
+  }
+
+  Future<void> _animateWandAction(
+      MagicWandAction action, double cardWidth, double cardHeight) async {
+    final overlay = Overlay.of(context);
+    if (overlay == null) return;
+
+    final start = _computeGlobalOffset(action.from!, cardWidth, cardHeight);
+    final end = _computeGlobalOffset(action.to!, cardWidth, cardHeight);
+    if (start == null || end == null) return;
+
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 350),
+      vsync: this,
+    );
+    final animation = CurvedAnimation(
+      parent: controller,
+      curve: Curves.easeInOut,
+    );
+
+    final cards = action.cards
+        .map((card) {
+          final clone = card.clone();
+          if (action.revealOnPickup && !clone.isFaceUp) {
+            clone.isFaceUp = true;
+          }
+          return clone;
+        })
+        .toList(growable: false);
+
+    final stackHeight = cardHeight + math.max(0, cards.length - 1) * 30;
+
+    late OverlayEntry entry;
+    entry = OverlayEntry(builder: (context) {
+      final offset = Offset.lerp(start, end, animation.value) ?? start;
+      return Positioned(
+        left: offset.dx,
+        top: offset.dy,
+        child: IgnorePointer(
+          ignoring: true,
+          child: SizedBox(
+            width: cardWidth,
+            height: stackHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (int i = 0; i < cards.length; i++)
+                  Positioned(
+                    top: i * 30,
+                    child: CardWidget(
+                      card: cards[i],
+                      width: cardWidth,
+                      height: cardHeight,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+
+    overlay.insert(entry);
+    await controller.forward();
+    entry.remove();
+    controller.dispose();
+  }
+
+  Offset? _computeGlobalOffset(
+      WandLocation location, double cardWidth, double cardHeight) {
+    RenderBox? box;
+    switch (location.pile) {
+      case WandPileType.stock:
+        box = _stockKey.currentContext?.findRenderObject() as RenderBox?;
+        break;
+      case WandPileType.waste:
+        box = _wasteKey.currentContext?.findRenderObject() as RenderBox?;
+        break;
+      case WandPileType.foundation:
+        if (location.index < _foundationKeys.length) {
+          box =
+              _foundationKeys[location.index].currentContext?.findRenderObject()
+                  as RenderBox?;
+        }
+        break;
+      case WandPileType.tableau:
+        if (location.index < _tableauKeys.length) {
+          box =
+              _tableauKeys[location.index].currentContext?.findRenderObject()
+                  as RenderBox?;
+        }
+        break;
+    }
+
+    if (box == null) return null;
+    var offset = box.localToGlobal(Offset.zero);
+    if (location.pile == WandPileType.tableau) {
+      offset += Offset(0, location.depth * 30);
+    }
+    return offset;
   }
 
   Rect? _getGlobalRect(GlobalKey key) {
