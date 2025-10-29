@@ -335,6 +335,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                             },
                             onAcceptWithDetails: (details) {
                               _startTimerIfNeeded();
+                              _clearDraggingCards();
                               final stack = List<PlayingCard>.from(details.data);
                               final moved = game.moveStackToTableau(stack, colIdx);
                               if (!moved) {
@@ -518,6 +519,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       },
       onAcceptWithDetails: (details) {
         _startTimerIfNeeded();
+        _clearDraggingCards();
         game.moveCardToFoundation(details.data.first, index);
       },
       builder: (context, candidate, rejected) {
@@ -704,19 +706,23 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     });
   }
 
+  bool _clearDraggingCards() {
+    if (_draggingCards.isEmpty) {
+      return false;
+    }
+    setState(() {
+      _draggingCards.clear();
+    });
+    return true;
+  }
+
   void _handleDragEnd(List<PlayingCard> stack, DraggableDetails details,
       double cardWidth, double cardHeight) {
     if (stack.isEmpty) {
       return;
     }
 
-    bool didUpdate = false;
-    if (_draggingCards.isNotEmpty) {
-      didUpdate = true;
-      setState(() {
-        _draggingCards.clear();
-      });
-    }
+    bool didUpdate = _clearDraggingCards();
 
     if (details.wasAccepted) {
       return;
