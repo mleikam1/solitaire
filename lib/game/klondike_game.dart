@@ -320,110 +320,406 @@ class KlondikeGame extends ChangeNotifier {
     return null;
   }
 
-  // ===== Power-up: Wand (auto-foundation) =====
-  void activateWand() {
-    if (wandCount <= 0) return;
+  // ===== Power-up: Wand (auto-play with magical extraction) =====
+  MagicWandPlan? planMagicWand() {
+    if (wandCount <= 0) return null;
+
+    final action = _findMagicWandAction();
+    if (action == null) return null;
+
+    return MagicWandPlan([action]);
+  }
+
+  bool executeMagicWand(MagicWandPlan plan) {
+    if (plan.actions.isEmpty || wandCount <= 0) return false;
 
     bool movedAny = false;
-    bool snapshotSaved = false;
-    bool moved;
-    do {
-      moved = false;
+    _saveSnapshot();
 
-      // waste top
-      final w = wasteTop;
-      if (w != null &&
-          _tryMoveToFoundation(w, onBeforeMove: () {
-            if (!snapshotSaved) {
-              _saveSnapshot();
-              snapshotSaved = true;
-            }
-          })) {
-        moved = true;
-        movedAny = true;
+    for (final action in plan.actions) {
+      movedAny |= _executeWandAction(action);
+    }
+
+    if (!movedAny) {
+      _history.removeLast();
+      return false;
+    }
+
+    wandCount--;
+    _moves++;
+    notifyListeners();
+    return true;
+  }
+
+  MagicWandAction? _findMagicWandAction() {
+    // Prefer straightforward foundation moves from accessible cards.
+    final directFoundation = _findAccessibleFoundationMove();
+    if (directFoundation != null) return directFoundation;
+
+    // Try extracting a buried card directly to a foundation pile.
+    final hiddenFoundation = _findHiddenFoundationMove();
+    if (hiddenFoundation != null) return hiddenFoundation;
+
+    // Move a visible card to another tableau column.
+    final tableauRebuild = _findAccessibleTableauMove();
+    if (tableauRebuild != null) return tableauRebuild;
+
+    // Pull a hidden card out and drop it into a tableau column.
+    final hiddenTableau = _findHiddenToTableauMove();
+    if (hiddenTableau != null) return hiddenTableau;
+
+    // Flip the top of a tableau column if still face-down.
+    final flip = _findFlipAction();
+    if (flip != null) return flip;
+
+    // Draw a fresh card or recycle the waste.
+    final drawOrRecycle = _findStockOrRecycleAction();
+    return drawOrRecycle;
+  }
+
+  MagicWandAction? _findAccessibleFoundationMove() {
+    final waste = wasteTop;
+    if (waste != null) {
+      final fIdx = _foundationIndexForSuit(waste.suit);
+      if (canPlaceOnFoundation(fIdx, waste)) {
+        return MagicWandAction(
+          type: MagicWandActionType.moveToFoundation,
+          cards: [waste],
+          from: WandLocation(
+            pile: WandPileType.waste,
+            index: 0,
+            depth: _waste.isEmpty ? 0 : _waste.length - 1,
+          ),
+          to: WandLocation(
+            pile: WandPileType.foundation,
+            index: fIdx,
+            depth: _foundations[fIdx].length,
+          ),
+        );
       }
+    }
 
-      // tableau tops
-      for (final col in _tableau) {
-        if (col.isNotEmpty && col.last.isFaceUp) {
-          if (_tryMoveToFoundation(col.last, onBeforeMove: () {
-            if (!snapshotSaved) {
-              _saveSnapshot();
-              snapshotSaved = true;
-            }
-          })) {
-            moved = true;
-            movedAny = true;
+    for (int col = 0; col < _tableau.length; col++) {
+      final column = _tableau[col];
+      if (column.isEmpty) continue;
+      final top = column.last;
+      if (!top.isFaceUp) continue;
+      final fIdx = _foundationIndexForSuit(top.suit);
+      if (canPlaceOnFoundation(fIdx, top)) {
+        return MagicWandAction(
+          type: MagicWandActionType.moveToFoundation,
+          cards: [top],
+          from: WandLocation(
+            pile: WandPileType.tableau,
+            index: col,
+            depth: column.length - 1,
+          ),
+          to: WandLocation(
+            pile: WandPileType.foundation,
+            index: fIdx,
+            depth: _foundations[fIdx].length,
+          ),
+        );
+      }
+    }
+
+    return null;
+  }
+
+  MagicWandAction? _findHiddenFoundationMove() {
+    for (int col = 0; col < _tableau.length; col++) {
+      final column = _tableau[col];
+      for (int depth = 0; depth < column.length; depth++) {
+        final card = column[depth];
+        final isBlocked = depth != column.length - 1;
+        final isHidden = !card.isFaceUp;
+        if (!isBlocked && !isHidden) continue;
+
+        final fIdx = _foundationIndexForSuit(card.suit);
+        if (canPlaceOnFoundation(fIdx, card)) {
+          return MagicWandAction(
+            type: MagicWandActionType.moveToFoundation,
+            cards: [card],
+            from: WandLocation(
+              pile: WandPileType.tableau,
+              index: col,
+              depth: depth,
+            ),
+            to: WandLocation(
+              pile: WandPileType.foundation,
+              index: fIdx,
+              depth: _foundations[fIdx].length,
+            ),
+            revealOnPickup: !card.isFaceUp,
+          );
+        }
+      }
+    }
+
+    return null;
+  }
+
+  MagicWandAction? _findAccessibleTableauMove() {
+    final waste = wasteTop;
+    if (waste != null) {
+      for (int dest = 0; dest < _tableau.length; dest++) {
+        final destPile = _tableau[dest];
+        final destTop = destPile.isEmpty ? null : destPile.last;
+        if (canPlaceOnTableau(destTop, waste)) {
+          return MagicWandAction(
+            type: MagicWandActionType.moveToTableau,
+            cards: [waste],
+            from: WandLocation(
+              pile: WandPileType.waste,
+              index: 0,
+              depth: _waste.isEmpty ? 0 : _waste.length - 1,
+            ),
+            to: WandLocation(
+              pile: WandPileType.tableau,
+              index: dest,
+              depth: _tableau[dest].length,
+            ),
+          );
+        }
+      }
+    }
+
+    for (int src = 0; src < _tableau.length; src++) {
+      final column = _tableau[src];
+      if (column.isEmpty) continue;
+      for (int depth = 0; depth < column.length; depth++) {
+        final card = column[depth];
+        if (!card.isFaceUp) continue;
+        final stack = List<PlayingCard>.from(column.getRange(depth, column.length));
+        final movingTop = stack.first;
+        for (int dest = 0; dest < _tableau.length; dest++) {
+          if (dest == src) continue;
+          final destPile = _tableau[dest];
+          final destTop = destPile.isEmpty ? null : destPile.last;
+          if (canPlaceOnTableau(destTop, movingTop)) {
+            return MagicWandAction(
+              type: MagicWandActionType.moveToTableau,
+              cards: stack,
+              from: WandLocation(
+                pile: WandPileType.tableau,
+                index: src,
+                depth: depth,
+              ),
+              to: WandLocation(
+                pile: WandPileType.tableau,
+                index: dest,
+                depth: _tableau[dest].length,
+              ),
+            );
           }
         }
       }
-    } while (moved);
-
-    if (!movedAny) {
-      movedAny = _forceAdvantageMove(() {
-        if (!snapshotSaved) {
-          _saveSnapshot();
-          snapshotSaved = true;
-        }
-      });
     }
 
-    if (movedAny) {
-      if (!snapshotSaved) {
-        _saveSnapshot();
-        snapshotSaved = true;
-      }
-      wandCount--;
-      _moves++;
-      notifyListeners();
-    }
+    return null;
   }
 
-  bool _forceAdvantageMove(VoidCallback ensureSnapshot) {
-    // Try to sneak a useful card from the stock directly onto the foundation.
-    for (int i = _stock.length - 1; i >= 0; i--) {
-      final candidate = _stock[i];
-      final foundationIndex = _foundationIndexForSuit(candidate.suit);
-      if (canPlaceOnFoundation(foundationIndex, candidate)) {
-        ensureSnapshot();
-        final card = _stock.removeAt(i);
-        card.isFaceUp = true;
-        _foundations[foundationIndex].add(card);
-        _score += 10;
-        return true;
+  MagicWandAction? _findHiddenToTableauMove() {
+    for (int src = 0; src < _tableau.length; src++) {
+      final column = _tableau[src];
+      for (int depth = 0; depth < column.length; depth++) {
+        final card = column[depth];
+        final isBlocked = depth != column.length - 1;
+        final isHidden = !card.isFaceUp;
+        if (!isBlocked && !isHidden) continue;
+
+        for (int dest = 0; dest < _tableau.length; dest++) {
+          if (dest == src) continue;
+          final destPile = _tableau[dest];
+          final destTop = destPile.isEmpty ? null : destPile.last;
+          if (canPlaceOnTableau(destTop, card)) {
+            return MagicWandAction(
+              type: MagicWandActionType.moveToTableau,
+              cards: [card],
+              from: WandLocation(
+                pile: WandPileType.tableau,
+                index: src,
+                depth: depth,
+              ),
+              to: WandLocation(
+                pile: WandPileType.tableau,
+                index: dest,
+                depth: _tableau[dest].length,
+              ),
+              revealOnPickup: !card.isFaceUp,
+            );
+          }
+        }
       }
     }
 
-    // If a tableau column still has a hidden card on top, reveal it.
-    for (final column in _tableau) {
-      if (column.isNotEmpty && !column.last.isFaceUp) {
-        ensureSnapshot();
-        column.last.isFaceUp = true;
-        _score += 5;
-        return true;
+    return null;
+  }
+
+  MagicWandAction? _findFlipAction() {
+    for (int col = 0; col < _tableau.length; col++) {
+      final column = _tableau[col];
+      if (column.isEmpty) continue;
+      final top = column.last;
+      if (!top.isFaceUp) {
+        return MagicWandAction(
+          type: MagicWandActionType.flipTableau,
+          cards: [top],
+          from: WandLocation(
+            pile: WandPileType.tableau,
+            index: col,
+            depth: column.length - 1,
+          ),
+        );
       }
     }
+    return null;
+  }
 
-    // Otherwise draw from the stock or recycle the waste to keep the game moving.
+  MagicWandAction? _findStockOrRecycleAction() {
     if (_stock.isNotEmpty) {
-      ensureSnapshot();
-      final card = _stock.removeLast();
-      card.isFaceUp = true;
-      _waste.add(card);
-      return true;
+      final card = _stock.last;
+      return MagicWandAction(
+        type: MagicWandActionType.drawFromStock,
+        cards: [card],
+        from: WandLocation(
+          pile: WandPileType.stock,
+          index: 0,
+          depth: _stock.length - 1,
+        ),
+        to: WandLocation(
+          pile: WandPileType.waste,
+          index: 0,
+          depth: _waste.length,
+        ),
+        revealOnPickup: true,
+      );
     }
 
     if (_stock.isEmpty && _waste.isNotEmpty) {
-      ensureSnapshot();
-      while (_waste.isNotEmpty) {
-        final card = _waste.removeLast();
-        card.isFaceUp = false;
-        _stock.add(card);
-      }
-      return true;
+      return const MagicWandAction(
+        type: MagicWandActionType.recycleWaste,
+      );
     }
 
-    return false;
+    return null;
+  }
+
+  bool _executeWandAction(MagicWandAction action) {
+    switch (action.type) {
+      case MagicWandActionType.moveToFoundation:
+        return _executeMoveToFoundation(action);
+      case MagicWandActionType.moveToTableau:
+        return _executeMoveToTableau(action);
+      case MagicWandActionType.drawFromStock:
+        return _executeDrawFromStock(action);
+      case MagicWandActionType.recycleWaste:
+        return _executeRecycleWaste();
+      case MagicWandActionType.flipTableau:
+        return _executeFlip(action);
+    }
+  }
+
+  bool _executeMoveToFoundation(MagicWandAction action) {
+    final from = action.from;
+    final to = action.to;
+    if (from == null || to == null) return false;
+    if (!_removeFromLocation(from, action.cards)) return false;
+
+    for (final card in action.cards) {
+      if (action.revealOnPickup && !card.isFaceUp) {
+        card.isFaceUp = true;
+        _score += 5;
+      }
+    }
+
+    final dest = _foundations[to.index];
+    dest.addAll(action.cards);
+    _score += 10 * action.cards.length;
+    return true;
+  }
+
+  bool _executeMoveToTableau(MagicWandAction action) {
+    final from = action.from;
+    final to = action.to;
+    if (from == null || to == null) return false;
+    if (!_removeFromLocation(from, action.cards)) return false;
+
+    for (final card in action.cards) {
+      if (action.revealOnPickup && !card.isFaceUp) {
+        card.isFaceUp = true;
+        _score += 5;
+      }
+    }
+
+    final dest = _tableau[to.index];
+    dest.addAll(action.cards);
+    _score += 3;
+    return true;
+  }
+
+  bool _executeDrawFromStock(MagicWandAction action) {
+    if (action.cards.isEmpty) return false;
+    final card = action.cards.first;
+    if (!_stock.remove(card)) return false;
+
+    if (action.revealOnPickup && !card.isFaceUp) {
+      card.isFaceUp = true;
+    }
+
+    _waste.add(card);
+    return true;
+  }
+
+  bool _executeRecycleWaste() {
+    if (_waste.isEmpty) return false;
+    while (_waste.isNotEmpty) {
+      final card = _waste.removeLast();
+      card.isFaceUp = false;
+      _stock.add(card);
+    }
+    return true;
+  }
+
+  bool _executeFlip(MagicWandAction action) {
+    if (action.cards.isEmpty) return false;
+    final card = action.cards.first;
+    if (card.isFaceUp) return false;
+    card.isFaceUp = true;
+    _score += 5;
+    return true;
+  }
+
+  bool _removeFromLocation(WandLocation from, List<PlayingCard> cards) {
+    switch (from.pile) {
+      case WandPileType.tableau:
+        final column = _tableau[from.index];
+        if (cards.isEmpty) return false;
+        final first = cards.first;
+        final startIndex = column.indexOf(first);
+        if (startIndex == -1) return false;
+        column.removeRange(startIndex, startIndex + cards.length);
+        _maybeFlipAfterRemoval(from.index);
+        return true;
+      case WandPileType.waste:
+        if (cards.length != 1) return false;
+        if (_waste.isEmpty || !identical(_waste.last, cards.first)) {
+          return false;
+        }
+        _waste.removeLast();
+        return true;
+      case WandPileType.foundation:
+        if (cards.length != 1) return false;
+        final pile = _foundations[from.index];
+        if (pile.isEmpty || !identical(pile.last, cards.first)) {
+          return false;
+        }
+        pile.removeLast();
+        return true;
+      case WandPileType.stock:
+        if (cards.length != 1) return false;
+        return _stock.remove(cards.first);
+    }
   }
 
   HintSuggestion? computeHint() => _computeHint();
@@ -630,6 +926,50 @@ class _GameSnapshot {
     required this.freezeCount,
     required this.wandCount,
   });
+}
+
+enum MagicWandActionType {
+  moveToFoundation,
+  moveToTableau,
+  drawFromStock,
+  recycleWaste,
+  flipTableau,
+}
+
+enum WandPileType { stock, waste, foundation, tableau }
+
+class WandLocation {
+  const WandLocation({
+    required this.pile,
+    required this.index,
+    required this.depth,
+  });
+
+  final WandPileType pile;
+  final int index;
+  final int depth;
+}
+
+class MagicWandAction {
+  const MagicWandAction({
+    required this.type,
+    this.cards = const <PlayingCard>[],
+    this.from,
+    this.to,
+    this.revealOnPickup = false,
+  });
+
+  final MagicWandActionType type;
+  final List<PlayingCard> cards;
+  final WandLocation? from;
+  final WandLocation? to;
+  final bool revealOnPickup;
+}
+
+class MagicWandPlan {
+  const MagicWandPlan(this.actions);
+
+  final List<MagicWandAction> actions;
 }
 
 class HintSuggestion {
