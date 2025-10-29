@@ -19,6 +19,7 @@ class SolitaireGamePage extends StatefulWidget {
 class _SolitaireGamePageState extends State<SolitaireGamePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   final KlondikeGame game = KlondikeGame();
+  static const double _tableauSpacing = 30.0;
   BannerAd? _bannerAd;
 
   late final Stopwatch _watch;
@@ -32,6 +33,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Timer? _hintTimer;
   HintSuggestion? _activeHint;
   Set<PlayingCard> _hintCards = <PlayingCard>{};
+  Set<PlayingCard> _draggingCards = <PlayingCard>{};
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
   final GlobalKey _foundationRowKey = GlobalKey();
@@ -55,6 +57,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     setState(() {
       _activeHint = null;
       _hintCards = <PlayingCard>{};
+      _draggingCards = <PlayingCard>{};
     });
   }
 
@@ -341,7 +344,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                             builder: (context, candidate, rejected) {
                               final stackHeight = column.isEmpty
                                   ? cardHeight
-                                  : cardHeight + (column.length - 1) * 30;
+                                  : cardHeight + (column.length - 1) * _tableauSpacing;
                               final isHighlighted = candidate.isNotEmpty;
                               final isHintTarget =
                                   _activeHint?.destinationTableauIndex == colIdx;
@@ -360,7 +363,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                                         row < column.length;
                                         row++)
                                       Positioned(
-                                        top: row * 30,
+                                        top: row * _tableauSpacing,
                                         child: _buildDraggableRun(
                                           column,
                                           row,
@@ -472,6 +475,14 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         child: _buildEmptySlotBox(),
       );
     }
+    if (_draggingCards.contains(card)) {
+      return SizedBox(
+        key: _wasteKey,
+        width: w,
+        height: h,
+        child: _buildEmptySlotBox(),
+      );
+    }
     return SizedBox(
       key: _wasteKey,
       width: w,
@@ -481,11 +492,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         feedback: _buildDragFeedback([card], w, h),
         childWhenDragging:
             SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
-        onDragStarted: _startTimerIfNeeded,
+        onDragStarted: () => _handleDragStarted([card]),
         onDragEnd: (details) {
-          if (!details.wasAccepted) {
-            _handleDragEnd([card], details, w, h);
-          }
+          _handleDragEnd([card], details, w, h);
         },
         dragAnchorStrategy: childDragAnchorStrategy,
         child: GestureDetector(
@@ -542,15 +551,16 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildFoundationDraggable(PlayingCard card, double w, double h) {
+    if (_draggingCards.contains(card)) {
+      return SizedBox(width: w, height: h);
+    }
     return Draggable<List<PlayingCard>>(
       data: [card],
       feedback: _buildDragFeedback([card], w, h),
       childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
-      onDragStarted: _startTimerIfNeeded,
+      onDragStarted: () => _handleDragStarted([card]),
       onDragEnd: (details) {
-        if (!details.wasAccepted) {
-          _handleDragEnd([card], details, w, h);
-        }
+        _handleDragEnd([card], details, w, h);
       },
       dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
@@ -574,14 +584,24 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildDragFeedback(List<PlayingCard> stack, double w, double h) {
+    final double totalHeight =
+        h + (_tableauSpacing * (stack.length <= 1 ? 0 : stack.length - 1));
     return IgnorePointer(
       child: Material(
         color: Colors.transparent,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final c in stack) CardWidget(card: c, width: w, height: h),
-          ],
+        child: SizedBox(
+          width: w,
+          height: totalHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (int i = 0; i < stack.length; i++)
+                Positioned(
+                  top: i * _tableauSpacing,
+                  child: CardWidget(card: stack[i], width: w, height: h),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -649,6 +669,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Widget _buildDraggableRun(
       List<PlayingCard> column, int row, double w, double h) {
     final card = column[row];
+    if (_draggingCards.contains(card)) {
+      return SizedBox(width: w, height: h);
+    }
     if (!card.isFaceUp) {
       return _buildHintableCard(card, w, h);
     }
@@ -659,11 +682,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       data: stack,
       feedback: _buildDragFeedback(stack, w, h),
       childWhenDragging: SizedBox(width: w, height: h),
-      onDragStarted: _startTimerIfNeeded,
+      onDragStarted: () => _handleDragStarted(stack),
       onDragEnd: (details) {
-        if (!details.wasAccepted) {
-          _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
-        }
+        _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
       },
       dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
@@ -676,14 +697,36 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     );
   }
 
+  void _handleDragStarted(List<PlayingCard> stack) {
+    _startTimerIfNeeded();
+    setState(() {
+      _draggingCards = stack.toSet();
+    });
+  }
+
   void _handleDragEnd(List<PlayingCard> stack, DraggableDetails details,
       double cardWidth, double cardHeight) {
-    if (stack.isEmpty) return;
+    if (stack.isEmpty) {
+      return;
+    }
+
+    bool didUpdate = false;
+    if (_draggingCards.isNotEmpty) {
+      didUpdate = true;
+      setState(() {
+        _draggingCards.clear();
+      });
+    }
+
+    if (details.wasAccepted) {
+      return;
+    }
+
     final dropPoint =
         details.offset + Offset(cardWidth / 2, cardHeight / 2);
     final moved =
         _autoSnapStack(stack, dropPoint, cardWidth, cardHeight);
-    if (!moved) {
+    if (!moved && !didUpdate) {
       setState(() {});
     }
   }
@@ -808,7 +851,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         })
         .toList(growable: false);
 
-    final stackHeight = cardHeight + math.max(0, cards.length - 1) * 30;
+    final stackHeight =
+        cardHeight + math.max(0, cards.length - 1) * _tableauSpacing;
 
     late OverlayEntry entry;
     entry = OverlayEntry(builder: (context) {
@@ -826,7 +870,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
               children: [
                 for (int i = 0; i < cards.length; i++)
                   Positioned(
-                    top: i * 30,
+                    top: i * _tableauSpacing,
                     child: CardWidget(
                       card: cards[i],
                       width: cardWidth,
@@ -875,7 +919,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     if (box == null) return null;
     var offset = box.localToGlobal(Offset.zero);
     if (location.pile == WandPileType.tableau) {
-      offset += Offset(0, location.depth * 30);
+      offset += Offset(0, location.depth * _tableauSpacing);
     }
     return offset;
   }
