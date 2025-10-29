@@ -172,17 +172,28 @@ class KlondikeGame extends ChangeNotifier {
   /// Handles scoring, flipping, and notifying listeners.
   bool moveStackToTableau(List<PlayingCard> stack, int destCol) {
     if (stack.isEmpty) return false;
+
     final movingTop = stack.first;
     final dest = _tableau[destCol];
+
     if (!canPlaceOnTableau(dest.isEmpty ? null : dest.last, movingTop)) {
       return false;
     }
+
+    final sourceIdx = _tableauIndexOf(movingTop);
+    if (sourceIdx != null && sourceIdx == destCol) {
+      // Dropping back onto the same column should leave the stack untouched.
+      return false;
+    }
+
     _saveSnapshot();
-    final sourceIdx = _removeStack(stack);
+    final removedFrom = _removeStack(stack);
+    assert(removedFrom == sourceIdx || sourceIdx == null,
+        'Stack removal did not match expected source column.');
+    _maybeFlipAfterRemoval(removedFrom);
     dest.addAll(stack);
     _score += 3;
     _moves++;
-    _maybeFlipAfterRemoval(sourceIdx);
     notifyListeners();
     return true;
   }
