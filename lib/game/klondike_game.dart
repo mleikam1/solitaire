@@ -171,7 +171,7 @@ class KlondikeGame extends ChangeNotifier {
     _score += 10;
     _moves++;
     _maybeFlipAfterRemoval(sourceIdx);
-    if (!_hasValidCardCount()) {
+    if (!_hasConsistentDeckState()) {
       _restoreLastSnapshotAndNotify();
       return false;
     }
@@ -209,7 +209,7 @@ class KlondikeGame extends ChangeNotifier {
     dest.addAll(stack);
     _score += 3;
     _moves++;
-    if (!_hasValidCardCount()) {
+    if (!_hasConsistentDeckState()) {
       _restoreLastSnapshotAndNotify();
       return false;
     }
@@ -230,6 +230,10 @@ class KlondikeGame extends ChangeNotifier {
         dest.add(card);
         _score += 10;
         _maybeFlipAfterRemoval(sourceIdx);
+        if (!_hasConsistentDeckState()) {
+          _restoreLastSnapshotAndNotify();
+          return false;
+        }
         return true;
       }
       return false;
@@ -241,6 +245,10 @@ class KlondikeGame extends ChangeNotifier {
         dest.add(card);
         _score += 10;
         _maybeFlipAfterRemoval(sourceIdx);
+        if (!_hasConsistentDeckState()) {
+          _restoreLastSnapshotAndNotify();
+          return false;
+        }
         return true;
       }
     }
@@ -259,6 +267,10 @@ class KlondikeGame extends ChangeNotifier {
         dest.addAll(stack);
         _score += 3;
         _maybeFlipAfterRemoval(sourceIdx);
+        if (!_hasConsistentDeckState()) {
+          _restoreLastSnapshotAndNotify();
+          return false;
+        }
         return true;
       }
     }
@@ -923,7 +935,34 @@ class KlondikeGame extends ChangeNotifier {
     return _stock.length + _waste.length + foundationCount + tableauCount;
   }
 
-  bool _hasValidCardCount() => _boardCardCount == _deckSize;
+  bool _hasConsistentDeckState() {
+    if (_boardCardCount != _deckSize) {
+      return false;
+    }
+
+    final Map<String, int> counts = <String, int>{};
+
+    void tally(Iterable<PlayingCard> cards) {
+      for (final card in cards) {
+        final key = '${card.suit.index}-${card.rank}';
+        counts.update(key, (value) => value + 1, ifAbsent: () => 1);
+      }
+    }
+
+    tally(_stock);
+    tally(_waste);
+    for (final pile in _foundations) {
+      tally(pile);
+    }
+    for (final column in _tableau) {
+      tally(column);
+    }
+
+    if (counts.length != _deckSize) {
+      return false;
+    }
+    return counts.values.every((count) => count == 1);
+  }
 
   List<PlayingCard> _clonePile(List<PlayingCard> source) =>
       source.map((c) => c.clone()).toList();
