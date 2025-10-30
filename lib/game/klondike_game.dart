@@ -23,6 +23,7 @@ class KlondikeGame extends ChangeNotifier {
 
   final List<_GameSnapshot> _history = [];
   static const int _historyLimit = 200;
+  static const int _deckSize = 52;
 
   // ===== Getters used by UI =====
   int get score => _score;
@@ -159,11 +160,21 @@ class KlondikeGame extends ChangeNotifier {
       return false;
     }
     _saveSnapshot();
+    final expectedTableau = _tableauIndexOf(card);
     final sourceIdx = _removeFromSource(card);
+    if ((expectedTableau != null && sourceIdx != expectedTableau) ||
+        (expectedTableau == null && sourceIdx != null)) {
+      _restoreLastSnapshotAndNotify();
+      return false;
+    }
     _foundations[foundationIndex].add(card);
     _score += 10;
     _moves++;
     _maybeFlipAfterRemoval(sourceIdx);
+    if (!_hasValidCardCount()) {
+      _restoreLastSnapshotAndNotify();
+      return false;
+    }
     notifyListeners();
     return true;
   }
@@ -188,12 +199,20 @@ class KlondikeGame extends ChangeNotifier {
 
     _saveSnapshot();
     final removedFrom = _removeStack(stack);
-    assert(removedFrom == sourceIdx || sourceIdx == null,
-        'Stack removal did not match expected source column.');
+    if ((sourceIdx != null && removedFrom != sourceIdx) ||
+        (sourceIdx != null && removedFrom == null) ||
+        (sourceIdx == null && removedFrom != null)) {
+      _restoreLastSnapshotAndNotify();
+      return false;
+    }
     _maybeFlipAfterRemoval(removedFrom);
     dest.addAll(stack);
     _score += 3;
     _moves++;
+    if (!_hasValidCardCount()) {
+      _restoreLastSnapshotAndNotify();
+      return false;
+    }
     notifyListeners();
     return true;
   }
@@ -886,6 +905,25 @@ class KlondikeGame extends ChangeNotifier {
       _history.removeAt(0);
     }
   }
+
+  void _restoreLastSnapshotAndNotify() {
+    if (_history.isEmpty) {
+      return;
+    }
+    final snapshot = _history.removeLast();
+    _restoreSnapshot(snapshot);
+    notifyListeners();
+  }
+
+  int get _boardCardCount {
+    final foundationCount =
+        _foundations.fold<int>(0, (sum, pile) => sum + pile.length);
+    final tableauCount =
+        _tableau.fold<int>(0, (sum, column) => sum + column.length);
+    return _stock.length + _waste.length + foundationCount + tableauCount;
+  }
+
+  bool _hasValidCardCount() => _boardCardCount == _deckSize;
 
   List<PlayingCard> _clonePile(List<PlayingCard> source) =>
       source.map((c) => c.clone()).toList();
