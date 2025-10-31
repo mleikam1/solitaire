@@ -364,6 +364,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                                         row < column.length;
                                         row++)
                                       Positioned(
+                                        key: ValueKey<int>(column[row].id),
                                         top: row * _tableauSpacing,
                                         child: _buildDraggableRun(
                                           column,
@@ -489,6 +490,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       width: w,
       height: h,
       child: Draggable<List<PlayingCard>>(
+        key: ValueKey<int>(card.id),
         data: [card],
         feedback: _buildDragFeedback([card], w, h),
         childWhenDragging:
@@ -557,6 +559,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       return SizedBox(width: w, height: h);
     }
     return Draggable<List<PlayingCard>>(
+      key: ValueKey<int>(card.id),
       data: [card],
       feedback: _buildDragFeedback([card], w, h),
       childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
@@ -681,6 +684,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     final stack = column.sublist(row); // inclusive stack (run)
 
     return Draggable<List<PlayingCard>>(
+      key: ValueKey<int>(card.id),
       data: stack,
       feedback: _buildDragFeedback(stack, w, h),
       childWhenDragging: SizedBox(width: w, height: h),
