@@ -482,7 +482,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         key: _wasteKey,
         width: w,
         height: h,
-        child: _buildEmptySlotBox(),
+        child: _buildDraggingGhost(card, w, h),
       );
     }
     return SizedBox(
@@ -493,8 +493,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         key: ValueKey<int>(card.id),
         data: [card],
         feedback: _buildDragFeedback([card], w, h),
-        childWhenDragging:
-            SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
+        childWhenDragging: SizedBox(
+            width: w, height: h, child: _buildDraggingGhost(card, w, h)),
         onDragStarted: () => _handleDragStarted([card]),
         onDragEnd: (details) {
           _handleDragEnd([card], details, w, h);
@@ -556,13 +556,14 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
   Widget _buildFoundationDraggable(PlayingCard card, double w, double h) {
     if (_draggingCards.contains(card)) {
-      return SizedBox(width: w, height: h, child: _buildEmptySlotBox());
+      return SizedBox(width: w, height: h, child: _buildDraggingGhost(card, w, h));
     }
     return Draggable<List<PlayingCard>>(
       key: ValueKey<int>(card.id),
       data: [card],
       feedback: _buildDragFeedback([card], w, h),
-      childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
+      childWhenDragging:
+          SizedBox(width: w, height: h, child: _buildDraggingGhost(card, w, h)),
       onDragStarted: () => _handleDragStarted([card]),
       onDragEnd: (details) {
         _handleDragEnd([card], details, w, h);
@@ -607,6 +608,20 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDraggingGhost(PlayingCard card, double w, double h) {
+    return IgnorePointer(
+      ignoring: true,
+      child: Opacity(
+        opacity: 0.7,
+        child: CardWidget(
+          card: card,
+          width: w,
+          height: h,
         ),
       ),
     );
@@ -675,7 +690,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       List<PlayingCard> column, int row, double w, double h) {
     final card = column[row];
     if (_draggingCards.contains(card)) {
-      return SizedBox(width: w, height: h, child: _buildEmptySlotBox());
+      return SizedBox(width: w, height: h, child: _buildDraggingGhost(card, w, h));
     }
     if (!card.isFaceUp) {
       return _buildHintableCard(card, w, h);
@@ -687,7 +702,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       key: ValueKey<int>(card.id),
       data: stack,
       feedback: _buildDragFeedback(stack, w, h),
-      childWhenDragging: SizedBox(width: w, height: h, child: _buildEmptySlotBox()),
+      childWhenDragging:
+          SizedBox(width: w, height: h, child: _buildDraggingGhost(card, w, h)),
       onDragStarted: () => _handleDragStarted(stack),
       onDragEnd: (details) {
         _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
