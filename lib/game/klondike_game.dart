@@ -51,6 +51,8 @@ class KlondikeGame extends ChangeNotifier {
     for (final f in _foundations) f.clear();
     for (final t in _tableau) t.clear();
 
+    PlayingCard.resetIdCounter();
+
     final deck = _buildDeck()..shuffle(Random());
 
     // tableau: col i gets i+1, top is face up

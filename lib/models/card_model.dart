@@ -3,18 +3,30 @@ import 'package:flutter/material.dart';
 enum Suit { hearts, diamonds, clubs, spades }
 
 class PlayingCard {
+  static int _nextId = 0;
+
   final int rank;
   final Suit suit;
+  final int id;
   bool isFaceUp;
 
   PlayingCard({
     required this.rank,
     required this.suit,
     this.isFaceUp = false,
-  });
+    int? id,
+  }) : id = id ?? _nextId++;
 
-  PlayingCard clone() =>
-      PlayingCard(rank: rank, suit: suit, isFaceUp: isFaceUp);
+  static void resetIdCounter() {
+    _nextId = 0;
+  }
+
+  PlayingCard clone() => PlayingCard(
+        rank: rank,
+        suit: suit,
+        isFaceUp: isFaceUp,
+        id: id,
+      );
 
   // ===== Display Value =====
   String get displayValue {
