@@ -8,32 +8,69 @@ import '../appearance/appearance_panel.dart';
 import '../appearance/table_surface.dart';
 import '../models/card_model.dart';
 import '../widgets/ad_banner.dart';
+import '../game/beat_challenge.dart';
+import '../game/deal_spec.dart';
+import '../game/help_snapshot.dart';
 import '../game/klondike_game.dart';
 import '../widgets/card_widget.dart';
 import '../widgets/bottom_toolbar.dart';
 
 class SolitaireGamePage extends StatefulWidget {
-  const SolitaireGamePage({super.key, this.createGame = KlondikeGame.new});
+  const SolitaireGamePage({super.key, this.createGame = KlondikeGame.new})
+    : _help = null;
+
+  SolitaireGamePage.fromDeal(DealSpec deal, {super.key})
+    : _help = null,
+      createGame = (() => KlondikeGame.fromDeal(deal));
+
+  SolitaireGamePage.fromHelp(HelpSnapshot help, {super.key})
+    : _help = help,
+      createGame = (() => KlondikeGame.fromSnapshot(help.board));
 
   final KlondikeGame Function() createGame;
+  final HelpSnapshot? _help;
 
   @override
-  State<SolitaireGamePage> createState() => _SolitaireGamePageState();
+  SolitaireGamePageState createState() => SolitaireGamePageState();
 }
 
-class _SolitaireGamePageState extends State<SolitaireGamePage>
+/// A share action can sample the board and local clock synchronously using a
+/// `GlobalKey<SolitaireGamePageState>`. Open each incoming share on a new route.
+class SolitaireGamePageState extends State<SolitaireGamePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final KlondikeGame game = widget.createGame();
   late final AnimationController _wandFlight;
 
-  late final Stopwatch _watch;
+  final Stopwatch _watch = WidgetsBinding.instance.samplingClock.stopwatch();
+  final Stopwatch _freezeWatch = WidgetsBinding.instance.samplingClock
+      .stopwatch();
   Timer? _timer;
-
-  bool _hasStarted = false;
-  bool _isPaused = false;
-  bool _isFreezeActive = false;
-  int _freezeCountdown = 0;
   Timer? _freezeTimer;
+
+  int _elapsedBase = 0;
+  int _freezeBudget = 0;
+  bool _hasStarted = false;
+  bool _foreground = true;
+
+  int get _elapsedMs => _elapsedBase + _watch.elapsedMilliseconds;
+  bool get _isFreezeActive => _freezeBudget > 0;
+  int get _remainingFreezeMs =>
+      math.max(0, _freezeBudget - _freezeWatch.elapsedMilliseconds);
+  int get _freezeCountdown => math.max(0, (_remainingFreezeMs - 1) ~/ 1000);
+
+  HelpSnapshot captureHelp() => HelpSnapshot(
+    board: game.snapshot(),
+    hasStarted: _hasStarted,
+    elapsedMilliseconds: _elapsedMs,
+    freezeRemainingMilliseconds: _remainingFreezeMs,
+  );
+
+  /// Only a fresh-start victory is eligible for a competition share. This is
+  /// a client result. A ranked service must independently verify the attempt.
+  CompletedDeal? get completedDeal => !game.startedFromSnapshot && game.isWon
+      ? (deal: game.deal, moves: game.moves, elapsedMilliseconds: _elapsedMs)
+      : null;
+
   Timer? _hintTimer;
   HintSuggestion? _activeHint;
   Set<PlayingCard> _hintCards = <PlayingCard>{};
@@ -45,12 +82,21 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   final GlobalKey _wasteKey = GlobalKey();
 
   bool _isWandAnimating = false;
+  int _boardRevision = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _watch = Stopwatch();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    final help = widget._help;
+    if (help != null) {
+      _elapsedBase = help.elapsedMilliseconds;
+      _hasStarted = help.hasStarted;
+      _setFreeze(help.freezeRemainingMilliseconds);
+      _syncClock();
+    }
     _wandFlight = AnimationController(
       duration: const Duration(milliseconds: 350),
       vsync: this,
@@ -59,6 +105,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   void _onGameChanged() {
+    _boardRevision++;
+    _syncClock();
     _hintTimer?.cancel();
     _hintTimer = null;
     setState(() {
@@ -70,45 +118,41 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
   // ===== Timer behavior (start on first move, pause/resume, reset on new deal) =====
   void _startTimerIfNeeded() {
-    if (!_hasStarted && !_watch.isRunning) {
-      _hasStarted = true;
-      _watch.start();
-      _timer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => setState(() {}),
-      );
-    }
+    if (_hasStarted) return;
+    _hasStarted = true;
+    _syncClock();
   }
 
-  void _pauseTimer() {
-    if (_watch.isRunning) {
-      _isPaused = true;
+  void _syncClock() {
+    final running =
+        _foreground && _hasStarted && !_isFreezeActive && !game.isWon;
+    if (running) {
+      _watch.start();
+    } else {
       _watch.stop();
-      _timer?.cancel();
     }
-  }
-
-  void _resumeTimer() {
-    if (_isPaused && !_isFreezeActive) {
-      _isPaused = false;
-      _watch.start();
-      _timer = Timer.periodic(
+    if (_foreground && (running || _isFreezeActive)) {
+      _timer ??= Timer.periodic(
         const Duration(seconds: 1),
         (_) => setState(() {}),
       );
+    } else {
+      _timer?.cancel();
+      _timer = null;
     }
   }
 
   void _resetTimer() {
     _hasStarted = false;
+    _elapsedBase = 0;
+    _setFreeze(0);
     _watch.stop();
     _watch.reset();
-    _timer?.cancel();
-    setState(() {});
+    _syncClock();
   }
 
   String _formatTime() {
-    final e = _watch.elapsed;
+    final e = Duration(milliseconds: _elapsedMs);
     final m = e.inMinutes.toString().padLeft(2, '0');
     final s = (e.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
@@ -118,28 +162,30 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   void _activateFreeze() {
     if (_isFreezeActive || game.freezeCount <= 0) return;
     setState(() {
-      _isFreezeActive = true;
-      _freezeCountdown = 10;
+      _setFreeze(HelpSnapshot.fullFreezeMilliseconds);
+      _syncClock();
       game.freezeCount--;
       _activeHint = null;
       _hintCards = <PlayingCard>{};
     });
     _hintTimer?.cancel();
     _hintTimer = null;
-    _pauseTimer();
+  }
 
+  // Store the full remaining interval, including the fractional first tick.
+  // Sampling a help link neither pauses nor consumes the owner's Freeze.
+  void _setFreeze(int milliseconds) {
     _freezeTimer?.cancel();
-    _freezeTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_freezeCountdown > 0) {
-        setState(() => _freezeCountdown--);
-      } else {
-        t.cancel();
-        setState(() {
-          _isFreezeActive = false;
-          _freezeCountdown = 0;
-        });
-        _resumeTimer();
-      }
+    _freezeWatch.stop();
+    _freezeWatch.reset();
+    _freezeBudget = milliseconds;
+    if (milliseconds == 0) return;
+    _freezeWatch.start();
+    _freezeTimer = Timer(Duration(milliseconds: milliseconds), () {
+      _freezeBudget = 0;
+      _freezeWatch.stop();
+      _syncClock();
+      setState(() {});
     });
   }
 
@@ -175,6 +221,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Future<void> _handleWandPressed(double cardWidth, double cardHeight) async {
     if (_isWandAnimating) return;
 
+    final plannedRevision = _boardRevision;
     final plan = game.planMagicWand();
     if (plan == null) {
       if (!mounted) return;
@@ -198,7 +245,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
     try {
       await _animateWandPlan(plan, cardWidth, cardHeight);
-      if (!mounted) return;
+      if (!mounted || plannedRevision != _boardRevision) return;
       final success = game.executeMagicWand(plan);
       if (!success) {
         ScaffoldMessenger.of(context)
@@ -217,13 +264,8 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached) {
-      _pauseTimer();
-    } else if (state == AppLifecycleState.resumed) {
-      _resumeTimer();
-    }
+    _foreground = state == AppLifecycleState.resumed;
+    _syncClock();
   }
 
   @override

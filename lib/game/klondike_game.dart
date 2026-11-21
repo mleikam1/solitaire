@@ -1,6 +1,7 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/card_model.dart';
+import 'board_snapshot.dart';
+import 'deal_spec.dart';
 
 /// Klondike Solitaire core state + rules.
 /// Public helpers are exposed for the UI (drag/drop validation & execution).
@@ -12,6 +13,15 @@ class KlondikeGame extends ChangeNotifier {
   List.generate(4, (_) => <PlayingCard>[]);
   final List<List<PlayingCard>> _tableau =
   List.generate(7, (_) => <PlayingCard>[]);
+
+  late DealSpec _deal;
+  DealSpec get deal => _deal;
+
+  bool _startedFromSnapshot = false;
+
+  /// A helper's finish belongs to the imported position. The origin survives
+  /// undo until the player starts a new deal or imports another position.
+  bool get startedFromSnapshot => _startedFromSnapshot;
 
   // Stats
   int _score = 0;
@@ -30,6 +40,7 @@ class KlondikeGame extends ChangeNotifier {
   int get moves => _moves;
   List<List<PlayingCard>> get tableau => _tableau;
   bool get canUndo => _history.isNotEmpty;
+  bool get isWon => _foundations.every((pile) => pile.length == 13);
 
   PlayingCard? get stockTop => _stock.isEmpty ? null : _stock.last;
   PlayingCard? get wasteTop => _waste.isEmpty ? null : _waste.last;
@@ -43,8 +54,29 @@ class KlondikeGame extends ChangeNotifier {
     newDeal();
   }
 
+  KlondikeGame.fromDeal(DealSpec deal) {
+    startDeal(deal);
+  }
+
+  KlondikeGame.fromSnapshot(BoardSnapshot board) {
+    restoreBoard(board);
+  }
+
   // ===== New Deal =====
   void newDeal() {
+    // Ordinary play carries remaining power-ups into the next deal.
+    startDeal(DealSpec.random(
+      initialFreezeCount: freezeCount,
+      initialWandCount: wandCount,
+    ));
+  }
+
+  void startDeal(DealSpec deal) {
+    final deck = deal.shuffledDeck();
+    _deal = deal;
+    _startedFromSnapshot = false;
+    freezeCount = deal.initialFreezeCount;
+    wandCount = deal.initialWandCount;
     _history.clear();
     _stock.clear();
     _waste.clear();
@@ -54,10 +86,6 @@ class KlondikeGame extends ChangeNotifier {
     for (final t in _tableau) {
       t.clear();
     }
-
-    PlayingCard.resetIdCounter();
-
-    final deck = _buildDeck()..shuffle(Random());
 
     // tableau: col i gets i+1, top is face up
     for (int col = 0; col < 7; col++) {
@@ -80,14 +108,39 @@ class KlondikeGame extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<PlayingCard> _buildDeck() {
-    final deck = <PlayingCard>[];
-    for (final s in Suit.values) {
-      for (int r = 1; r <= 13; r++) {
-        deck.add(PlayingCard(rank: r, suit: s));
-      }
-    }
-    return deck;
+  /// Capture the current position by value. The page owns the play clock.
+  BoardSnapshot snapshot() => BoardSnapshot.capture(
+    deal: _deal,
+    stock: _stock,
+    waste: _waste,
+    foundations: _foundations,
+    tableau: _tableau,
+    score: _score,
+    moves: _moves,
+    freezeCount: freezeCount,
+    wandCount: wandCount,
+  );
+
+  /// Install a validated position, with this position as the undo boundary.
+  void restoreBoard(BoardSnapshot board) {
+    List<PlayingCard> cards(List<SnapshotCard> pile) =>
+        pile.map((c) => c.toPlayingCard()).toList();
+
+    final position = _GameSnapshot(
+      stock: cards(board.stock),
+      waste: cards(board.waste),
+      foundations: board.foundations.map(cards).toList(),
+      tableau: board.tableau.map(cards).toList(),
+      score: board.score,
+      moves: board.moves,
+      freezeCount: board.freezeCount,
+      wandCount: board.wandCount,
+    );
+    _restoreSnapshot(position);
+    _deal = board.deal;
+    _startedFromSnapshot = true;
+    _history.clear();
+    notifyListeners();
   }
 
   // ===== Stock / Waste =====
