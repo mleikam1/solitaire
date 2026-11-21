@@ -48,8 +48,12 @@ class KlondikeGame extends ChangeNotifier {
     _history.clear();
     _stock.clear();
     _waste.clear();
-    for (final f in _foundations) f.clear();
-    for (final t in _tableau) t.clear();
+    for (final f in _foundations) {
+      f.clear();
+    }
+    for (final t in _tableau) {
+      t.clear();
+    }
 
     PlayingCard.resetIdCounter();
 
@@ -339,8 +343,6 @@ class KlondikeGame extends ChangeNotifier {
       _score += 5;
     }
   }
-
-  bool _isRed(Suit s) => s == Suit.hearts || s == Suit.diamonds;
 
   int _foundationIndexForSuit(Suit s) {
     switch (s) {
@@ -769,7 +771,7 @@ class KlondikeGame extends ChangeNotifier {
   bool get hasHintAvailable => _computeHint(previewOnly: true) != null;
 
   HintSuggestion? _computeHint({bool previewOnly = false}) {
-    HintSuggestion _buildResult(
+    HintSuggestion buildResult(
       HintActionType action, {
       List<PlayingCard> cards = const <PlayingCard>[],
       int? sourceTableau,
@@ -802,7 +804,7 @@ class KlondikeGame extends ChangeNotifier {
       if (canPlaceOnFoundation(foundationIndex, wasteCard)) {
         final cards =
             previewOnly ? const <PlayingCard>[] : <PlayingCard>[wasteCard];
-        return _buildResult(
+        return buildResult(
           HintActionType.moveToFoundation,
           cards: cards,
           destinationFoundation: foundationIndex,
@@ -819,7 +821,7 @@ class KlondikeGame extends ChangeNotifier {
       if (canPlaceOnFoundation(foundationIndex, top)) {
         final cards =
             previewOnly ? const <PlayingCard>[] : <PlayingCard>[top];
-        return _buildResult(
+        return buildResult(
           HintActionType.moveToFoundation,
           cards: cards,
           sourceTableau: i,
@@ -834,7 +836,7 @@ class KlondikeGame extends ChangeNotifier {
         final facedown = column.last;
         final cards =
             previewOnly ? const <PlayingCard>[] : <PlayingCard>[facedown];
-        return _buildResult(
+        return buildResult(
           HintActionType.flipTableauCard,
           cards: cards,
           sourceTableau: i,
@@ -849,7 +851,7 @@ class KlondikeGame extends ChangeNotifier {
             destPile.isEmpty ? null : destPile.last, wasteCard)) {
           final cards =
               previewOnly ? const <PlayingCard>[] : <PlayingCard>[wasteCard];
-          return _buildResult(
+          return buildResult(
             HintActionType.moveToTableau,
             cards: cards,
             destinationTableau: dest,
@@ -873,7 +875,7 @@ class KlondikeGame extends ChangeNotifier {
             final cards = previewOnly
                 ? const <PlayingCard>[]
                 : List<PlayingCard>.from(stack);
-            return _buildResult(
+            return buildResult(
               HintActionType.moveToTableau,
               cards: cards,
               sourceTableau: src,
@@ -885,7 +887,7 @@ class KlondikeGame extends ChangeNotifier {
     }
 
     if (_stock.isNotEmpty || _waste.isNotEmpty) {
-      return _buildResult(
+      return buildResult(
         HintActionType.drawFromStock,
         highlightStock: true,
       );

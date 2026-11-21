@@ -1,5 +1,4 @@
-// lib/widgets/ad_banner.dart
-import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -14,32 +13,32 @@ class _AdBannerState extends State<AdBanner> {
   BannerAd? _bannerAd;
   bool _isLoaded = false;
 
-  String get _bannerUnitId {
-    // Google’s official test unit IDs
-    if (Platform.isAndroid) {
-      return 'ca-app-pub-3940256099942544/6300978111';
-    } else if (Platform.isIOS) {
-      return 'ca-app-pub-3940256099942544/2934735716';
-    }
-    // Not supported (web/desktop) — just return empty and reserve 50px height.
-    return '';
+  String? get _bannerUnitId {
+    if (kIsWeb) return null;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => 'ca-app-pub-3940256099942544/6300978111',
+      TargetPlatform.iOS => 'ca-app-pub-3940256099942544/2934735716',
+      _ => null,
+    };
   }
 
   @override
   void initState() {
     super.initState();
     final id = _bannerUnitId;
-    if (id.isEmpty) return;
+    if (id == null) return;
 
     _bannerAd = BannerAd(
       adUnitId: id,
       size: AdSize.banner, // 320x50
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (ad) => setState(() => _isLoaded = true),
+        onAdLoaded: (ad) {
+          if (mounted) setState(() => _isLoaded = true);
+        },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          setState(() => _isLoaded = false);
+          if (mounted) setState(() => _bannerAd = null);
         },
       ),
     )..load();

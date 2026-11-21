@@ -131,7 +131,7 @@ class _PowerUpButton extends StatelessWidget {
             decoration: BoxDecoration(
               color: (count > 0)
                   ? theme.colorScheme.primary
-                  : theme.disabledColor.withOpacity(0.4),
+                  : theme.disabledColor.withValues(alpha: 0.4),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
@@ -155,7 +155,7 @@ class _PowerUpButton extends StatelessWidget {
                     BoxShadow(
                       blurRadius: 12,
                       spreadRadius: 1,
-                      color: theme.colorScheme.primary.withOpacity(0.35),
+                      color: theme.colorScheme.primary.withValues(alpha: 0.35),
                     ),
                   ],
                 ),

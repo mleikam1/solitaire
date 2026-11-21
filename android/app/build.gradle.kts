@@ -8,7 +8,8 @@ plugins {
 
 android {
     namespace = "com.example.solitaire"
-    compileSdk = 35
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
 
     defaultConfig {
         applicationId = "com.example.solitaire"
