@@ -7,7 +7,7 @@ import 'src/wire_fields.dart';
 /// the owner actually had when starting the deal. A seed is not a share ID.
 final class DealSpec {
   static const int version = 1;
-  static const String rules = 'relaxed-draw1-v1';
+  static const String rules = 'klondike-draw1-v1';
   static const int _modulus = 2147483647;
   static const int _range = _modulus - 1;
   static const int maxInventory = 2147483647;
@@ -57,6 +57,11 @@ final class DealSpec {
 
   factory DealSpec.fromJson(Object? raw) {
     final value = wireObject(raw, 'deal', _fields);
+    if (value['rules'] == 'relaxed-draw1-v1') {
+      throw const FormatException(
+        'This deal uses retired relaxed rules. Start a new Klondike deal.',
+      );
+    }
     if (value['version'] != version || value['rules'] != rules) {
       throw const FormatException('Unsupported deal version or rules');
     }

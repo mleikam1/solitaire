@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:solitaire/appearance/appearance.dart';
+import 'package:solitaire/game/board_snapshot.dart';
+import 'package:solitaire/game/deal_spec.dart';
 import 'package:solitaire/game/klondike_game.dart';
 import 'package:solitaire/models/card_model.dart';
 import 'package:solitaire/pages/solitaire_game_page.dart';
@@ -10,50 +12,44 @@ import 'package:solitaire/widgets/card_widget.dart';
 
 /// Build a legal descending run over a concealed ace, keeping all 52 cards.
 KlondikeGame preparedDeal() {
-  final game = KlondikeGame();
-  final columns = game.tableau;
-  final pool = columns.last;
-  for (final column in columns.take(6)) {
-    pool.addAll(column);
-    column.clear();
-  }
-  // Collect any fixture cards that were shuffled into the stock.
-  const wanted = {
-    (1, Suit.hearts),
-    (6, Suit.clubs),
-    (5, Suit.diamonds),
-    (7, Suit.spades),
-  };
-  while (!pool.map((c) => (c.rank, c.suit)).toSet().containsAll(wanted)) {
-    game.drawFromStock();
-    expect(game.moveStackToTableau([game.wasteTop!], 0), isTrue);
-    pool.add(columns.first.removeLast());
-  }
-
-  final cards = pool.toList()..sort((a, b) => a.rank.compareTo(b.rank));
-  pool.clear();
-  for (final card in cards) {
-    card.isFaceUp = false;
-  }
-  PlayingCard take(int rank, Suit suit) {
-    return cards.removeAt(
-      cards.indexWhere((c) => c.rank == rank && c.suit == suit),
+  final deal = DealSpec(seed: 1);
+  final deck = deal.shuffledDeck();
+  PlayingCard take(int rank, Suit suit, {bool faceUp = true}) {
+    final index = deck.indexWhere(
+      (card) => card.rank == rank && card.suit == suit,
     );
+    return deck.removeAt(index)..isFaceUp = faceUp;
   }
 
-  columns[0].addAll([
-    take(1, Suit.hearts),
-    take(6, Suit.clubs)..isFaceUp = true,
-    take(5, Suit.diamonds)..isFaceUp = true,
-  ]);
-  columns[1].add(take(7, Suit.spades)..isFaceUp = true);
-  for (var i = 0; i < cards.length; i++) {
-    columns[2 + i % 5].add(cards[i]);
+  final columns = [
+    [
+      take(1, Suit.hearts, faceUp: false),
+      take(6, Suit.spades),
+      take(5, Suit.diamonds),
+    ],
+    [take(7, Suit.hearts)],
+    [take(6, Suit.clubs)],
+    [take(6, Suit.diamonds)],
+    [take(5, Suit.spades)],
+    [take(9, Suit.diamonds)],
+    [take(9, Suit.spades)],
+  ];
+  for (var i = 0; deck.length > 24; i++) {
+    columns[2 + i % 5].insert(0, deck.removeLast());
   }
-  for (final column in columns.skip(2)) {
-    column.last.isFaceUp = true;
-  }
-  return game;
+  return KlondikeGame.fromSnapshot(
+    BoardSnapshot.capture(
+      deal: deal,
+      stock: deck,
+      waste: [],
+      foundations: List.generate(4, (_) => <PlayingCard>[]),
+      tableau: columns,
+      score: 0,
+      moves: 0,
+      freezeCount: deal.initialFreezeCount,
+      wandCount: deal.initialWandCount,
+    ),
+  );
 }
 
 Future<KlondikeGame> openBoard(WidgetTester tester) async {
@@ -177,6 +173,46 @@ void main() {
         findsOneWidget,
       );
       expect(game.moves, before);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'dropping the five of spades rejects the six of clubs and accepts the six of diamonds',
+    (tester) async {
+      final game = await openBoard(tester);
+      final five = game.tableau[4].last;
+      final clubs = game.tableau[2].last;
+      final diamonds = game.tableau[3].last;
+      final original = game.snapshot().encode();
+
+      Future<void> dropOn(PlayingCard target) async {
+        // Grab at the left edge and release at the right. The pointer still
+        // targets this pile even if the feedback card overlaps its neighbor.
+        final from =
+            tester.getRect(cardWidgets(five.id)).centerLeft +
+            const Offset(3, 0);
+        final to =
+            tester.getRect(cardWidgets(target.id)).centerRight -
+            const Offset(3, 0);
+        final drag = await tester.startGesture(from);
+        await drag.moveBy(const Offset(0, -25));
+        await tester.pump();
+        await drag.moveTo(to);
+        await tester.pump();
+        await drag.up();
+        await tester.pumpAndSettle();
+      }
+
+      await dropOn(clubs);
+      expect(game.snapshot().encode(), original);
+      expect(game.canUndo, isFalse);
+
+      await dropOn(diamonds);
+      expect(game.tableau[3].last, same(five));
+      expect(game.moves, 1);
+      expect(game.canUndo, isTrue);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,

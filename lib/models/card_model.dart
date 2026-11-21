@@ -1,6 +1,21 @@
 import 'package:flutter/material.dart';
 
-enum Suit { hearts, diamonds, clubs, spades }
+enum Suit {
+  hearts,
+  diamonds,
+  clubs,
+  spades;
+
+  bool get isRed => this == Suit.hearts || this == Suit.diamonds;
+}
+
+/// The exposed child sits one rank below a parent of the opposite color.
+bool canBuildTableauPair(
+  int parentRank,
+  Suit parentSuit,
+  int childRank,
+  Suit childSuit,
+) => childRank == parentRank - 1 && parentSuit.isRed != childSuit.isRed;
 
 class PlayingCard {
   static int _nextId = 0;
@@ -45,16 +60,7 @@ class PlayingCard {
   }
 
   // ===== Suit Color =====
-  Color get suitColor {
-    switch (suit) {
-      case Suit.hearts:
-      case Suit.diamonds:
-        return Colors.red;
-      case Suit.spades:
-      case Suit.clubs:
-        return Colors.black;
-    }
-  }
+  Color get suitColor => suit.isRed ? Colors.red : Colors.black;
 
   // ===== Suit Glyph (♥ ♦ ♠ ♣) =====
   String get suitGlyph {

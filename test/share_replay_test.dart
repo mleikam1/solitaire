@@ -128,20 +128,20 @@ void main() {
     test(
       'actual drag, stack, foundation, wand and undo replay across a fork',
       () {
-        final owner = _newGame(3);
-        // Move J hearts onto Q hearts. The next command moves the pair.
-        expect(owner.tableau[1].last.id, 10);
-        expect(owner.tableau[5].last.id, 11);
-        expect(owner.moveStackToTableau([owner.tableau[1].last], 5), isTrue);
+        final owner = _newGame(28);
+        // Move 10 spades onto J diamonds, then carry the pair onto Q spades.
+        expect(owner.tableau[2].last.id, 48);
+        expect(owner.tableau[5].last.id, 23);
+        expect(owner.moveStackToTableau([owner.tableau[2].last], 5), isTrue);
         expect(owner.score, 8);
-        expect(owner.tableau[1].single.isFaceUp, isTrue);
+        expect(owner.tableau[2].last.isFaceUp, isTrue);
         final checkpoint = owner.snapshot();
         final wire = checkpoint.encode();
         final friend = KlondikeGame.fromSnapshot(BoardSnapshot.decode(wire));
         expect(friend.canUndo, isFalse);
         expect(owner.canUndo, isTrue);
         expect(
-          identical(owner.tableau[1].last, friend.tableau[1].last),
+          identical(owner.tableau[2].last, friend.tableau[2].last),
           isFalse,
         );
 
@@ -149,17 +149,17 @@ void main() {
           final stages = <WireMap>[];
           final column = game.tableau[5];
           final stack = column.sublist(column.length - 2);
-          expect(stack.map((c) => c.id), [11, 10]);
-          expect(game.moveStackToTableau(stack, 4), isTrue);
-          expect(game.tableau[4].last.id, 10);
+          expect(stack.map((c) => c.id), [23, 48]);
+          expect(game.moveStackToTableau(stack, 3), isTrue);
+          expect(game.tableau[3].last.id, 48);
           expect(game.score, 16);
           stages.add(_wire(game));
 
-          final ace = game.tableau[2].last;
-          expect((ace.suit, ace.rank), (Suit.clubs, 1));
-          expect(game.moveCardToFoundation(ace, 2), isTrue);
-          expect(game.foundationTop(2)!.id, ace.id);
-          expect(game.tableau[2].last.isFaceUp, isTrue);
+          final ace = game.tableau[4].last;
+          expect((ace.suit, ace.rank), (Suit.diamonds, 1));
+          expect(game.moveCardToFoundation(ace, 1), isTrue);
+          expect(game.foundationTop(1)!.id, ace.id);
+          expect(game.tableau[4].last.isFaceUp, isTrue);
           expect(game.score, 31);
           stages.add(_wire(game));
 
@@ -217,26 +217,6 @@ void main() {
       expect(snapshot.encode(), source.snapshot().encode());
     });
 
-    test('relaxed columns accept a non-king, including after restore', () {
-      final wire = _wire(_newGame(3));
-      // Put col 0's 6 of spades in the waste, leaving an empty column.
-      wire['waste'].add(wire['tableau'][0].removeLast());
-      final game = KlondikeGame.fromSnapshot(BoardSnapshot.fromJson(wire));
-      expect(game.wasteTop!.rank, 6);
-      expect(game.moveStackToTableau([game.wasteTop!], 0), isTrue);
-      expect(game.tableau[0].single.rank, 6);
-      expect(game.moves, 1);
-      expect(game.undo(), isTrue);
-      expect(game.snapshot().toJson(), wire);
-    });
-
-    test('accepts visible rank gaps left by interior wand extraction', () {
-      final wire = _wire(_newGame(1));
-      // K clubs, 10 clubs. A visible run may have lost interior cards.
-      wire['tableau'][1][0]['up'] = true;
-      expect(BoardSnapshot.fromJson(wire).toJson(), wire);
-    });
-
     test('restore a late board and play its winning move independently', () {
       final wire = _wire(_newGame(1));
       // Four suit-specific runs. The last black king is in the waste.
@@ -268,6 +248,8 @@ void main() {
     final corruptions = <String, void Function(WireMap)>{
       'unknown snapshot version': (m) => m['version'] = 2,
       'unknown generator version': (m) => m['deal']['version'] = 2,
+      'retired relaxed game rules':
+          (m) => m['deal']['rules'] = 'relaxed-draw1-v1',
       'unknown game rules': (m) => m['deal']['rules'] = 'strict-draw3',
       'zero seed': (m) => m['deal']['seed'] = 0,
       'out of range seed': (m) => m['deal']['seed'] = 2147483647,

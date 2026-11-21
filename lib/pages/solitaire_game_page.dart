@@ -75,6 +75,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   HintSuggestion? _activeHint;
   Set<PlayingCard> _hintCards = <PlayingCard>{};
   Set<PlayingCard> _draggingCards = <PlayingCard>{};
+  final Map<PlayingCard, Offset> _dragPointers = {};
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
   final GlobalKey _foundationRowKey = GlobalKey();
@@ -113,6 +114,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       _activeHint = null;
       _hintCards = <PlayingCard>{};
       _draggingCards = <PlayingCard>{};
+      _dragPointers.clear();
     });
   }
 
@@ -397,13 +399,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
                       children: List.generate(7, (colIdx) {
                         final column = game.tableau[colIdx];
                         return DragTarget<List<PlayingCard>>(
-                          onWillAcceptWithDetails: (details) {
-                            final stack = details.data;
-                            if (stack.isEmpty) return false;
-                            final movingTop = stack.first;
-                            final destTop = column.isEmpty ? null : column.last;
-                            return game.canPlaceOnTableau(destTop, movingTop);
-                          },
+                          onWillAcceptWithDetails: (details) =>
+                              game.canMoveStackToTableau(details.data, colIdx),
                           onAcceptWithDetails: (details) {
                             _startTimerIfNeeded();
                             _clearDraggingCards();
@@ -574,6 +571,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           child: _buildDraggingGhost(card, w, h),
         ),
         onDragStarted: () => _handleDragStarted([card]),
+        onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
         onDragEnd: (details) {
           _handleDragEnd([card], details, w, h);
         },
@@ -594,8 +592,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     return DragTarget<List<PlayingCard>>(
       onWillAcceptWithDetails: (details) {
         final stack = details.data;
-        if (stack.isEmpty || stack.length != 1) return false;
-        return game.canPlaceOnFoundation(index, stack.first);
+        return stack.length == 1 &&
+            game.canMoveCardToFoundation(stack.single, index);
       },
       onAcceptWithDetails: (details) {
         _startTimerIfNeeded();
@@ -642,6 +640,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
         child: _buildDraggingGhost(card, w, h),
       ),
       onDragStarted: () => _handleDragStarted([card]),
+      onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
       onDragEnd: (details) {
         _handleDragEnd([card], details, w, h);
       },
@@ -766,11 +765,10 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     double h,
   ) {
     final card = column[row];
-    if (!card.isFaceUp) {
+    final stack = column.sublist(row);
+    if (!game.isMovableRun(stack)) {
       return _buildHintableCard(card, w, h);
     }
-
-    final stack = column.sublist(row); // inclusive stack (run)
 
     return Draggable<List<PlayingCard>>(
       key: ValueKey<int>(card.id),
@@ -782,6 +780,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
         child: _buildDraggingGhost(card, w, h),
       ),
       onDragStarted: () => _handleDragStarted(stack),
+      onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
       onDragEnd: (details) {
         _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
       },
@@ -826,13 +825,15 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       return;
     }
 
-    bool didUpdate = _clearDraggingCards();
+    final pointer = _dragPointers.remove(stack.first);
+    final didUpdate = _clearDraggingCards();
 
     if (details.wasAccepted) {
       return;
     }
 
-    final dropPoint = details.offset + Offset(cardWidth / 2, cardHeight / 2);
+    final dropPoint =
+        pointer ?? details.offset + Offset(cardWidth / 2, cardHeight / 2);
     final moved = _autoSnapStack(stack, dropPoint, cardWidth, cardHeight);
     if (!moved && !didUpdate) {
       setState(() {});
@@ -846,7 +847,6 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     double cardHeight,
   ) {
     if (stack.isEmpty) return false;
-    final topCard = stack.first;
     final tolerance = math.max(24.0, cardWidth * 0.35);
     final maxDistance = math.max(cardWidth, cardHeight) * 0.75;
 
@@ -856,11 +856,10 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       final rect = _getGlobalRect(_tableauKeys[i]);
       if (rect == null) continue;
       final expanded = rect.inflate(tolerance);
-      final column = game.tableau[i];
-      if (!game.canPlaceOnTableau(
-        column.isEmpty ? null : column.last,
-        topCard,
-      )) {
+      if (!game.canMoveStackToTableau(stack, i)) {
+        // An explicit drop on an illegal pile should return to the source
+        // even if an adjacent legal pile is within the near-miss tolerance.
+        if (rect.contains(dropPoint)) return false;
         continue;
       }
       final distance = _distanceToRect(expanded, dropPoint);
@@ -870,19 +869,18 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       }
     }
 
-    if (stack.length == 1) {
-      for (int i = 0; i < _foundationKeys.length; i++) {
-        if (!game.canPlaceOnFoundation(i, topCard)) {
-          continue;
-        }
-        final rect = _getGlobalRect(_foundationKeys[i]);
-        if (rect == null) continue;
-        final expanded = rect.inflate(tolerance);
-        final distance = _distanceToRect(expanded, dropPoint);
-        if (distance <= maxDistance &&
-            (bestTarget == null || distance < bestTarget.distance)) {
-          bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, distance);
-        }
+    for (int i = 0; i < _foundationKeys.length; i++) {
+      final rect = _getGlobalRect(_foundationKeys[i]);
+      if (rect == null) continue;
+      if (stack.length != 1 || !game.canMoveCardToFoundation(stack.single, i)) {
+        if (rect.contains(dropPoint)) return false;
+        continue;
+      }
+      final expanded = rect.inflate(tolerance);
+      final distance = _distanceToRect(expanded, dropPoint);
+      if (distance <= maxDistance &&
+          (bestTarget == null || distance < bestTarget.distance)) {
+        bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, distance);
       }
     }
 
@@ -892,7 +890,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
         final expandedRow = rowRect.inflate(tolerance);
         if (expandedRow.contains(dropPoint)) {
           for (int i = 0; i < _foundationKeys.length; i++) {
-            if (game.canPlaceOnFoundation(i, topCard)) {
+            if (game.canMoveCardToFoundation(stack.single, i)) {
               bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, 0);
               break;
             }

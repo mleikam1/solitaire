@@ -115,7 +115,7 @@ final class BoardSnapshot {
         throw FormatException('Invalid pile at $field.');
       }
       final cards = <SnapshotCard>[];
-      var sawFaceUp = false;
+      PlayingCard? previousVisible;
       for (var depth = 0; depth < raw.length; depth++) {
         final path = '$field[$depth]';
         final card = wireObject(raw[depth], path, const ['id', 'up']);
@@ -130,12 +130,24 @@ final class BoardSnapshot {
         if (foundationIndex != null && id != foundationIndex * 13 + depth) {
           throw FormatException('Invalid foundation order at $path.');
         }
-        // A tableau starts with its hidden cards. The Wand can extract a
-        // visible interior card, so its visible ranks need not form a run.
-        if (faceUp == null && sawFaceUp && !up) {
-          throw FormatException('Hidden card above a visible card at $path.');
+        if (faceUp == null) {
+          // Tableau columns have a hidden prefix followed by one legal run.
+          if (up) {
+            final current = DealSpec.cardFromId(id, isFaceUp: true);
+            if (previousVisible != null &&
+                !canBuildTableauPair(
+                  previousVisible.rank,
+                  previousVisible.suit,
+                  current.rank,
+                  current.suit,
+                )) {
+              throw FormatException('Invalid tableau sequence at $path.');
+            }
+            previousVisible = current;
+          } else if (previousVisible != null) {
+            throw FormatException('Hidden card above a visible card at $path.');
+          }
         }
-        sawFaceUp |= up;
         cards.add(SnapshotCard._(id, up));
       }
       return List.unmodifiable(cards);
