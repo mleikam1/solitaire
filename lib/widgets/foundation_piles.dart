@@ -15,10 +15,10 @@ class FoundationPiles extends StatelessWidget {
           decoration: BoxDecoration(
             border: Border.all(color: Colors.white, width: 2),
             borderRadius: BorderRadius.circular(4),
-            color: Colors.black.withOpacity(0.2),
+            color: Colors.black.withValues(alpha: 0.2),
           ),
           alignment: Alignment.center,
-          child: Text('A', style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 26)),
+          child: Text('A', style: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 26)),
         );
       }),
     );

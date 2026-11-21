@@ -83,10 +83,10 @@ class BottomToolbar extends StatelessWidget {
     final bool interactable = onPressed != null;
     final bool effectiveEnabled = (showAsEnabled ?? interactable) && interactable;
     final Color backgroundColor = !interactable
-        ? const Color(0xFF2E7D32).withOpacity(0.45)
+        ? const Color(0xFF2E7D32).withValues(alpha: 0.45)
         : effectiveEnabled
             ? const Color(0xFF2E7D32)
-            : const Color(0xFF2E7D32).withOpacity(0.75);
+            : const Color(0xFF2E7D32).withValues(alpha: 0.75);
     final Color iconColor = !interactable
         ? Colors.white38
         : effectiveEnabled

@@ -1,93 +1,82 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../appearance/appearance.dart';
 import '../models/card_model.dart';
 
 class CardWidget extends StatelessWidget {
   final PlayingCard card;
   final double width;
   final double height;
+  final DeckStyle? deck;
 
   const CardWidget({
     super.key,
     required this.card,
     required this.width,
     required this.height,
+    this.deck,
   });
-
-  String _suitGlyph(Suit suit) {
-    switch (suit) {
-      case Suit.hearts:
-        return '♥';
-      case Suit.diamonds:
-        return '♦';
-      case Suit.spades:
-        return '♠';
-      case Suit.clubs:
-        return '♣';
-    }
-  }
-
-  Color _suitColor(Suit suit) {
-    switch (suit) {
-      case Suit.hearts:
-      case Suit.diamonds:
-        return Colors.red;
-      case Suit.spades:
-      case Suit.clubs:
-        return Colors.black;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(6);
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: radius,
-        border: Border.all(
-          color: Colors.black.withOpacity(0.18),
-          width: 1.4,
+    final activeDeck =
+        deck ??
+        context.select<AppearanceController?, DeckStyle?>(
+          (appearance) => appearance?.deck,
+        );
+    final asset =
+        card.isFaceUp ? activeDeck?.faceAsset(card) : activeDeck?.backAsset;
+    final radius = BorderRadius.circular(asset == null ? 6 : width * 0.045);
+    return Semantics(
+      image: true,
+      label:
+          card.isFaceUp
+              ? '${card.displayValue} of ${card.suit.name}'
+              : 'Face-down card',
+      excludeSemantics: true,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: asset == null ? Colors.white : null,
+          borderRadius: radius,
+          border:
+              asset == null
+                  ? Border.all(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    width: 1.4,
+                  )
+                  : null,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              offset: const Offset(1, 2),
+              blurRadius: 2,
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            offset: const Offset(1, 2),
-            blurRadius: 2,
-          ),
-        ],
+        clipBehavior: Clip.antiAlias,
+        child:
+            asset == null
+                ? (card.isFaceUp ? _buildFront() : _buildBack(radius))
+                : Image.asset(
+                  asset,
+                  fit: BoxFit.contain,
+                  cacheWidth: (width * MediaQuery.devicePixelRatioOf(context))
+                      .ceil()
+                      .clamp(1, 500),
+                ),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: card.isFaceUp ? _buildFront() : _buildBack(radius),
     );
   }
 
   Widget _buildFront() {
-    final color = _suitColor(card.suit);
-    final glyph = _suitGlyph(card.suit);
-
-    // Rank text
-    String rankText;
-    switch (card.rank) {
-      case 1:
-        rankText = 'A';
-        break;
-      case 11:
-        rankText = 'J';
-        break;
-      case 12:
-        rankText = 'Q';
-        break;
-      case 13:
-        rankText = 'K';
-        break;
-      default:
-        rankText = card.rank.toString();
-    }
+    final color = card.suitColor;
+    final glyph = card.suitGlyph;
+    final rankText = card.displayValue;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -98,8 +87,7 @@ class CardWidget extends StatelessWidget {
         final innerHeight = max(1.0, maxHeight - padding * 2);
         final centerGlyphSize = min(innerWidth, innerHeight) * 0.34;
         final isWideRank = rankText.length > 1;
-        final rankFontSize =
-            max(10.0, innerWidth * (isWideRank ? 0.55 : 0.7));
+        final rankFontSize = max(10.0, innerWidth * (isWideRank ? 0.55 : 0.7));
         final cornerSuitFontSize = max(9.0, innerWidth * 0.45);
         final cornerBoxWidth = max(innerWidth * 0.42, 16.0);
         final topInset = innerHeight * 0.04;
@@ -157,7 +145,7 @@ class CardWidget extends StatelessWidget {
                     child: Text(
                       glyph,
                       style: TextStyle(
-                        color: color.withOpacity(0.8),
+                        color: color.withValues(alpha: 0.8),
                         fontSize: cornerSuitFontSize,
                       ),
                     ),
@@ -171,7 +159,7 @@ class CardWidget extends StatelessWidget {
                   height: centerGlyphSize,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: color.withOpacity(0.08),
+                    color: color.withValues(alpha: 0.08),
                   ),
                   child: Center(
                     child: FittedBox(
@@ -198,7 +186,7 @@ class CardWidget extends StatelessWidget {
   Widget _buildBack(BorderRadius radius) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF3C63FF).withOpacity(0.8),
+        color: const Color(0xFF3C63FF).withValues(alpha: 0.8),
         borderRadius: radius,
         border: Border.all(color: Colors.white, width: 1.2),
       ),

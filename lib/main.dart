@@ -1,18 +1,29 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:provider/provider.dart';
+import 'appearance/appearance.dart';
 import 'pages/solitaire_game_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await MobileAds.instance.initialize();
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    await MobileAds.instance.initialize();
+  }
 
   // Lock to portrait orientation
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-  runApp(const SolitaireApp());
+  final appearance = await AppearanceController.load();
+  runApp(
+    ChangeNotifierProvider.value(
+      value: appearance,
+      child: const SolitaireApp(),
+    ),
+  );
 }
 
 class SolitaireApp extends StatelessWidget {
