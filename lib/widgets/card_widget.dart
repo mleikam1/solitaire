@@ -11,6 +11,7 @@ class CardWidget extends StatelessWidget {
   final double width;
   final double height;
   final DeckStyle? deck;
+  final double artworkScale;
 
   const CardWidget({
     super.key,
@@ -18,6 +19,7 @@ class CardWidget extends StatelessWidget {
     required this.width,
     required this.height,
     this.deck,
+    this.artworkScale = 1,
   });
 
   @override
@@ -65,7 +67,9 @@ class CardWidget extends StatelessWidget {
                 : Image.asset(
                   asset,
                   fit: BoxFit.contain,
-                  cacheWidth: (width * MediaQuery.devicePixelRatioOf(context))
+                  cacheWidth: (width *
+                          artworkScale *
+                          MediaQuery.devicePixelRatioOf(context))
                       .ceil()
                       .clamp(1, 500),
                 ),

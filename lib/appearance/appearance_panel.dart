@@ -35,8 +35,11 @@ class _AppearancePanel extends StatefulWidget {
   State<_AppearancePanel> createState() => _AppearancePanelState();
 }
 
+enum _SettingsTab { deck, table, play }
+
 class _AppearancePanelState extends State<_AppearancePanel> {
-  bool _showDecks = true;
+  _SettingsTab _tab = _SettingsTab.deck;
+  bool get _showDecks => _tab == _SettingsTab.deck;
 
   @override
   Widget build(BuildContext context) {
@@ -55,23 +58,16 @@ class _AppearancePanelState extends State<_AppearancePanel> {
         );
         final picker = Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          child: SegmentedButton<bool>(
+          child: SegmentedButton<_SettingsTab>(
             expandedInsets: EdgeInsets.zero,
             segments: const [
-              ButtonSegment(
-                value: true,
-                label: Text('Deck'),
-                icon: Icon(Icons.style_outlined),
-              ),
-              ButtonSegment(
-                value: false,
-                label: Text('Table'),
-                icon: Icon(Icons.landscape_outlined),
-              ),
+              ButtonSegment(value: _SettingsTab.deck, label: Text('Deck')),
+              ButtonSegment(value: _SettingsTab.table, label: Text('Table')),
+              ButtonSegment(value: _SettingsTab.play, label: Text('Play')),
             ],
-            selected: {_showDecks},
+            selected: {_tab},
             onSelectionChanged:
-                (choice) => setState(() => _showDecks = choice.single),
+                (choice) => setState(() => _tab = choice.single),
             showSelectedIcon: false,
             style: SegmentedButton.styleFrom(
               backgroundColor: _paper,
@@ -103,7 +99,7 @@ class _AppearancePanelState extends State<_AppearancePanel> {
           shrinkWrap: scrollWholePanel,
           physics:
               scrollWholePanel ? const NeverScrollableScrollPhysics() : null,
-          padding: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.only(top: 10, bottom: 4),
           crossAxisCount: columns,
           crossAxisSpacing: 8,
           mainAxisSpacing: 8,
@@ -149,7 +145,7 @@ class _AppearancePanelState extends State<_AppearancePanel> {
                       children: [
                         const Expanded(
                           child: Text(
-                            'Appearance',
+                            'Settings',
                             style: TextStyle(
                               fontFamily: 'Georgia',
                               fontFamilyFallback: ['serif'],
@@ -160,7 +156,7 @@ class _AppearancePanelState extends State<_AppearancePanel> {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Close Appearance',
+                          tooltip: 'Close Settings',
                           icon: const Icon(Icons.close_rounded),
                           color: _ink,
                           onPressed: () => Navigator.of(context).pop(),
@@ -168,22 +164,47 @@ class _AppearancePanelState extends State<_AppearancePanel> {
                       ],
                     ),
                   ),
-                  if (scrollWholePanel)
-                    Expanded(child: ListView(children: [sample, picker, grid]))
+                  picker,
+                  if (_tab == _SettingsTab.play)
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            activeThumbColor: _pine,
+                            title: const Text(
+                              'Auto-collect by suit',
+                              style: TextStyle(
+                                color: _ink,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'Move a card to a foundation to collect the next exposed cards of that suit in order.',
+                              style: TextStyle(color: _ink),
+                            ),
+                            value: appearance.autoCollectFoundations,
+                            onChanged: appearance.setAutoCollectFoundations,
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (scrollWholePanel)
+                    Expanded(child: ListView(children: [sample, grid]))
                   else ...[
                     sample,
-                    picker,
                     Expanded(child: grid),
                   ],
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(foregroundColor: _pine),
-                      onPressed: appearance.restoreDefaults,
-                      icon: const Icon(Icons.restore, size: 18),
-                      label: const Text('Restore Defaults'),
+                  if (_tab != _SettingsTab.play)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(foregroundColor: _pine),
+                        onPressed: appearance.restoreDefaults,
+                        icon: const Icon(Icons.restore, size: 18),
+                        label: const Text('Restore Defaults'),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

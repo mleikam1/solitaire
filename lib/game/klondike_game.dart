@@ -52,6 +52,7 @@ class KlondikeGame extends ChangeNotifier {
 
   PlayingCard? get stockTop => _stock.isEmpty ? null : _stock.last;
   PlayingCard? get wasteTop => _waste.isEmpty ? null : _waste.last;
+  PlayingCard? get wasteUnderTop => _waste.length < 2 ? null : _waste[_waste.length - 2];
 
   PlayingCard? foundationTop(int i) {
     final pile = _foundations[i];
@@ -215,6 +216,80 @@ class KlondikeGame extends ChangeNotifier {
       canPlaceOnFoundation(foundationIndex, card) &&
       (identical(wasteTop, card) ||
           _tableau.any((col) => col.isNotEmpty && identical(col.last, card)));
+
+  PlayingCard? nextFoundationCard(int foundationIndex) {
+    for (final pile in [_waste, ..._tableau]) {
+      if (pile.isNotEmpty && canPlaceOnFoundation(foundationIndex, pile.last)) {
+        return pile.last;
+      }
+    }
+    return null;
+  }
+
+  /// Dry-run the draw-one rules without touching live cards or undo history.
+  /// Only a pile's exposed top informs a choice. Removing a tableau top
+  /// turns its successor face-up under the normal rules. Collection order is
+  /// immaterial: a foundation move can only expose more possible collections.
+  List<AutoFinishStep>? planAutoFinish() {
+    if (isWon || _tableau.any((p) => p.isNotEmpty && !p.last.isFaceUp)) {
+      return null;
+    }
+    final stock = _stock.toList();
+    final waste = _waste.toList();
+    final sources = [waste, for (final col in _tableau) col.toList()];
+    final ranks = [for (final pile in _foundations) pile.length];
+    var remaining = _deckSize - ranks.fold(0, (sum, n) => sum + n);
+    var drawsSinceCollection = 0;
+    final steps = <AutoFinishStep>[];
+
+    while (remaining > 0) {
+      final source =
+          sources.where((pile) {
+            if (pile.isEmpty) return false;
+            final top = pile.last;
+            return top.rank == ranks[_foundationIndexForSuit(top.suit)] + 1;
+          }).firstOrNull;
+      if (source != null) {
+        final card = source.removeLast();
+        ranks[_foundationIndexForSuit(card.suit)]++;
+        steps.add((action: AutoFinishAction.collect, card: card));
+        remaining--;
+        drawsSinceCollection = 0;
+        continue;
+      }
+
+      // N draws plus one recycle return a draw-one stock to this cursor.
+      final count = stock.length + waste.length;
+      if (count == 0 || drawsSinceCollection >= count + 1) return null;
+      if (stock.isEmpty) {
+        steps.add((action: AutoFinishAction.recycle, card: waste.last));
+        stock.addAll(waste.reversed);
+        waste.clear();
+      } else {
+        final card = stock.removeLast();
+        waste.add(card);
+        steps.add((action: AutoFinishAction.draw, card: card));
+      }
+      drawsSinceCollection++;
+    }
+    return steps;
+  }
+
+  bool playAutoFinishStep(AutoFinishStep step) {
+    switch (step.action) {
+      case AutoFinishAction.collect:
+        return moveCardToFoundation(
+          step.card,
+          _foundationIndexForSuit(step.card.suit),
+        );
+      case AutoFinishAction.draw:
+        if (!identical(stockTop, step.card)) return false;
+      case AutoFinishAction.recycle:
+        if (stockTop != null || !identical(wasteTop, step.card)) return false;
+    }
+    drawFromStock();
+    return true;
+  }
 
   /// The exact exposed suffix of its original column, or one accessible
   /// waste/foundation card. Drag payloads can outlive a move or an undo.
@@ -1059,6 +1134,10 @@ class KlondikeGame extends ChangeNotifier {
       ..addAll(source.map((c) => c.clone()));
   }
 }
+
+enum AutoFinishAction { collect, draw, recycle }
+
+typedef AutoFinishStep = ({AutoFinishAction action, PlayingCard card});
 
 class _GameSnapshot {
   final List<PlayingCard> stock;

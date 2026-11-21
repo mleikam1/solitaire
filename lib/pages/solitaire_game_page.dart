@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../appearance/appearance.dart';
@@ -14,7 +15,9 @@ import '../game/help_snapshot.dart';
 import '../game/klondike_game.dart';
 import '../widgets/card_widget.dart';
 import '../widgets/card_flight.dart';
+import '../widgets/wand_reveal_flight.dart';
 import '../widgets/bottom_toolbar.dart';
+import '../widgets/victory_celebration.dart';
 
 class SolitaireGamePage extends StatefulWidget {
   const SolitaireGamePage({super.key, this.createGame = KlondikeGame.new})
@@ -41,15 +44,22 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final KlondikeGame game = widget.createGame();
   late final AnimationController _wandFlight;
+  WandRevealFlight? _wandReveal;
+  MagicWandAction? _wandPickup;
   late final AnimationController _travel;
   final _flightLayerKey = GlobalKey();
+  final _gameSurfaceKey = GlobalKey();
+  bool get _showVictory =>
+      game.isWon && _transfers.isEmpty && !_isWandAnimating;
   List<_CardTransfer> _transfers = const [];
+  VoidCallback? _pendingAutoPlay;
+  bool _settingsOpen = false;
   bool _reduceMotion = false;
   Size? _viewSize;
 
   final Stopwatch _watch = WidgetsBinding.instance.samplingClock.stopwatch();
-  final Stopwatch _freezeWatch = WidgetsBinding.instance.samplingClock
-      .stopwatch();
+  final Stopwatch _freezeWatch =
+      WidgetsBinding.instance.samplingClock.stopwatch();
   Timer? _timer;
   Timer? _freezeTimer;
 
@@ -73,9 +83,14 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
 
   /// Only a fresh-start victory is eligible for a competition share. This is
   /// a client result. A ranked service must independently verify the attempt.
-  CompletedDeal? get completedDeal => !game.startedFromSnapshot && game.isWon
-      ? (deal: game.deal, moves: game.moves, elapsedMilliseconds: _elapsedMs)
-      : null;
+  CompletedDeal? get completedDeal =>
+      !game.startedFromSnapshot && game.isWon
+          ? (
+            deal: game.deal,
+            moves: game.moves,
+            elapsedMilliseconds: _elapsedMs,
+          )
+          : null;
 
   Timer? _hintTimer;
   HintSuggestion? _activeHint;
@@ -105,12 +120,13 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       _syncClock();
     }
     _wandFlight = AnimationController(
-      duration: const Duration(milliseconds: 350),
+      duration: WandRevealFlight.duration,
       vsync: this,
     );
     _travel = AnimationController(vsync: this)..addStatusListener((status) {
       if (status == AnimationStatus.completed && _transfers.isNotEmpty) {
         setState(() => _transfers = const []);
+        _scheduleAutoPlay();
       }
     });
     game.addListener(_onGameChanged);
@@ -122,15 +138,21 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     final size = MediaQuery.sizeOf(context);
     _reduceMotion = MediaQuery.disableAnimationsOf(context);
     if (_reduceMotion || size != _viewSize) _clearFlight();
+    final routeIsCurrent = ModalRoute.isCurrentOf(context) ?? true;
+    if (_reduceMotion || size != _viewSize || !routeIsCurrent) {
+      _wandFlight.stop();
+    }
     _viewSize = size;
   }
 
   void _clearFlight() {
     _travel.stop();
     _transfers = const [];
+    _scheduleAutoPlay();
   }
 
   void _onGameChanged() {
+    _cancelAutoPlay();
     _clearFlight();
     // A move or Undo invalidates a Wand flight still awaiting its landing.
     if (_wandFlight.isAnimating) _wandFlight.stop();
@@ -179,6 +201,11 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     _watch.stop();
     _watch.reset();
     _syncClock();
+  }
+
+  void _newDeal() {
+    _resetTimer();
+    game.newDeal();
   }
 
   String _formatTime() {
@@ -249,8 +276,9 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Future<void> _handleWandPressed(double cardWidth, double cardHeight) async {
-    if (_isWandAnimating) return;
+    if (_isWandAnimating || !_foreground) return;
 
+    _cancelAutoPlay();
     final plannedRevision = _boardRevision;
     final plan = game.planMagicWand();
     if (plan == null) {
@@ -275,10 +303,29 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     });
 
     try {
-      await _animateWandPlan(plan, cardWidth, cardHeight);
-      if (!mounted || plannedRevision != _boardRevision) return;
+      if (!_reduceMotion) {
+        for (final action in plan.actions) {
+          await _animateWandAction(action, cardWidth, cardHeight);
+        }
+      }
+      if (!mounted ||
+          !_foreground ||
+          plannedRevision != _boardRevision ||
+          ModalRoute.isCurrentOf(context) == false) {
+        return;
+      }
       final success = game.executeMagicWand(plan);
-      if (!success) {
+      if (success) {
+        final destination = plan.actions.last.to;
+        _continueAfterMove(
+          cardWidth,
+          cardHeight,
+          foundationIndex:
+              destination?.pile == WandPileType.foundation
+                  ? destination!.index
+                  : null,
+        );
+      } else {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
@@ -288,16 +335,26 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
             ),
           );
       }
+    } on TickerCanceled {
+      // The board, route or app changed before the Wand could land.
     } finally {
-      if (mounted) setState(() => _isWandAnimating = false);
+      if (mounted) {
+        setState(() {
+          _wandReveal = null;
+          _wandPickup = null;
+          _isWandAnimating = false;
+        });
+      }
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) _wandFlight.stop();
     if (!_foreground && _transfers.isNotEmpty) setState(_clearFlight);
     _syncClock();
+    if (_foreground) _scheduleAutoPlay();
   }
 
   @override
@@ -321,17 +378,53 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     return Scaffold(
       backgroundColor: const Color(0xFF006400),
       body: Stack(
+        key: _gameSurfaceKey,
         fit: StackFit.expand,
         children: [
           TableSurface(table: table),
-          SafeArea(
-            child: LayoutBuilder(
-              builder:
-                  (context, constraints) => _buildBoard(constraints, table),
+          ExcludeSemantics(
+            excluding: _showVictory,
+            child: ExcludeFocus(
+              excluding: _showVictory,
+              child: IgnorePointer(
+                ignoring: _showVictory,
+                child: SafeArea(
+                  child: LayoutBuilder(
+                    builder:
+                        (context, constraints) =>
+                            _buildBoard(constraints, table),
+                  ),
+                ),
+              ),
             ),
           ),
+          if (_showVictory) LayoutBuilder(builder: _buildVictory),
         ],
       ),
+    );
+  }
+
+  // The Stack lays out the board before this sibling, so the foundation
+  // positions include the safe area, ad banner and current screen geometry.
+  Widget _buildVictory(BuildContext context, BoxConstraints constraints) {
+    final surface =
+        _gameSurfaceKey.currentContext!.findRenderObject()! as RenderBox;
+    final foundations = [
+      for (final key in _foundationKeys)
+        if (key.currentContext?.findRenderObject() case final RenderBox box)
+          box.localToGlobal(Offset.zero, ancestor: surface) & box.size,
+    ];
+    assert(foundations.length == 4);
+    final size = foundations.first.size;
+    return VictoryCelebration(
+      foundations: foundations,
+      deck: context.select<AppearanceController, DeckStyle>((a) => a.deck),
+      score: game.score,
+      moves: game.moves,
+      elapsed: _formatTime(),
+      onNewDeal: _newDeal,
+      onUndo:
+          game.canUndo ? () => _undoWithFlight(size.width, size.height) : null,
     );
   }
 
@@ -429,8 +522,11 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
                       children: List.generate(7, (colIdx) {
                         final column = game.tableau[colIdx];
                         return DragTarget<List<PlayingCard>>(
-                          onWillAcceptWithDetails: (details) =>
-                              game.canMoveStackToTableau(details.data, colIdx),
+                          onWillAcceptWithDetails:
+                              (details) => game.canMoveStackToTableau(
+                                details.data,
+                                colIdx,
+                              ),
                           onAcceptWithDetails: (details) {
                             _startTimerIfNeeded();
                             _clearDraggingCards();
@@ -518,21 +614,14 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           ),
         ),
         BottomToolbar(
-          onNewDeal: () {
-            _hintTimer?.cancel();
-            _hintTimer = null;
-            _activeHint = null;
-            _hintCards = <PlayingCard>{};
-            _resetTimer();
-            game.newDeal();
-          },
+          onNewDeal: _newDeal,
           onFreeze: game.freezeCount > 0 ? _activateFreeze : null,
           onWand:
               (game.wandCount > 0 && !_isWandAnimating)
                   ? () => _handleWandPressed(cardWidth, cardHeight)
                   : null,
           onHint: _showHint,
-          onSettings: () => showAppearancePanel(context),
+          onSettings: _openSettings,
           onUndo:
               game.canUndo
                   ? () => _undoWithFlight(cardWidth, cardHeight)
@@ -560,6 +649,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: NotificationListener<ScrollStartNotification>(
         onNotification: (_) {
+          _wandFlight.stop();
           if (_transfers.isNotEmpty) setState(_clearFlight);
           return false;
         },
@@ -596,6 +686,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
                           ),
                     ),
               ),
+            if (_wandReveal != null) _wandReveal!,
           ],
         ),
       ),
@@ -623,8 +714,84 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     return null;
   }
 
-  // Apply the normal engine command once. Use its actual destination and
-  // moved suffix so animation never needs its own copy of the game rules.
+  Future<void> _openSettings() async {
+    _wandFlight.stop();
+    _settingsOpen = true;
+    try {
+      await showAppearancePanel(context);
+    } finally {
+      _settingsOpen = false;
+      if (mounted) _scheduleAutoPlay();
+    }
+  }
+
+  void _cancelAutoPlay() => _pendingAutoPlay = null;
+
+  // Wait for the previous landing and its new layout. Undo, a new deal, or
+  // another player move invalidates the callback with the old card references.
+  void _scheduleAutoPlay() {
+    final next = _pendingAutoPlay;
+    if (next == null || !_foreground || _settingsOpen || _travel.isAnimating) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !identical(next, _pendingAutoPlay) ||
+          !_foreground ||
+          _settingsOpen ||
+          _travel.isAnimating) {
+        return;
+      }
+      _pendingAutoPlay = null;
+      next();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _continueAfterMove(
+    double width,
+    double height, {
+    int? foundationIndex,
+    Iterator<AutoFinishStep>? finish,
+  }) {
+    if (game.isWon) return;
+    _pendingAutoPlay = () {
+      final route = finish ?? game.planAutoFinish()?.iterator;
+      AutoFinishStep step;
+      if (route != null && route.moveNext()) {
+        step = route.current;
+      } else {
+        if (foundationIndex == null ||
+            !context.read<AppearanceController>().autoCollectFoundations) {
+          return;
+        }
+        final card = game.nextFoundationCard(foundationIndex);
+        if (card == null) return;
+        step = (action: AutoFinishAction.collect, card: card);
+      }
+
+      // The layout can change during a flight or while Settings is open.
+      final size = _getGlobalRect(_stockKey)?.size ?? Size(width, height);
+      final moved = _animateMove(
+        step.card,
+        size.width,
+        size.height,
+        () => game.playAutoFinishStep(step),
+        flip: step.action == AutoFinishAction.draw,
+        duration: Duration(milliseconds: route == null ? 145 : 90),
+      );
+      if (moved) {
+        _continueAfterMove(
+          size.width,
+          size.height,
+          foundationIndex: foundationIndex,
+          finish: route,
+        );
+      }
+    };
+    _scheduleAutoPlay();
+  }
+
   bool _moveWithFlight(
     PlayingCard card,
     double width,
@@ -632,6 +799,37 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     VoidCallback apply, {
     Offset? release,
     bool flip = false,
+  }) {
+    final moved = _animateMove(
+      card,
+      width,
+      height,
+      apply,
+      release: release,
+      flip: flip,
+    );
+    if (moved) {
+      final index = card.suit.index;
+      _continueAfterMove(
+        width,
+        height,
+        foundationIndex:
+            identical(game.foundationTop(index), card) ? index : null,
+      );
+    }
+    return moved;
+  }
+
+  // Apply the engine command once. Its actual destination and moved suffix
+  // determine the artwork in flight.
+  bool _animateMove(
+    PlayingCard card,
+    double width,
+    double height,
+    VoidCallback apply, {
+    Offset? release,
+    bool flip = false,
+    Duration? duration,
   }) {
     final before = game.moves;
     final layer =
@@ -675,17 +873,22 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       },
       flip: flip,
     );
-    _startFlights([transfer], layer);
+    _startFlights([transfer], layer, duration: duration);
     return true;
   }
 
-  void _startFlights(List<_CardTransfer> transfers, RenderBox layer) {
+  void _startFlights(
+    List<_CardTransfer> transfers,
+    RenderBox layer, {
+    Duration? duration,
+  }) {
     if (transfers.isEmpty) return;
     setState(() => _transfers = transfers);
     _travel.duration =
-        transfers.any((t) => t.flip)
+        duration ??
+        (transfers.any((t) => t.flip)
             ? CardFlight.drawDuration
-            : CardFlight.moveDuration;
+            : CardFlight.moveDuration);
     _travel.forward(from: 0);
     // Recheck after layout in case a shorter column clamped the scroll offset.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -812,7 +1015,10 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
               _startTimerIfNeeded();
               final top = game.stockTop;
               if (top == null) {
-                game.drawFromStock(); // Recycle the waste.
+                if (game.wasteTop != null) {
+                  game.drawFromStock();
+                  _continueAfterMove(w, h);
+                }
               } else {
                 _moveWithFlight(top, w, h, game.drawFromStock, flip: true);
               }
@@ -897,7 +1103,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
             fit: StackFit.expand,
             children: [
               _buildEmptySlotBox(),
-              if (card != null)
+              if (card != null && !_showVictory)
                 Center(child: _buildFoundationDraggable(card, w, h)),
               if (isHintTarget) _buildHintOverlay(),
               if (highlight)
@@ -950,7 +1156,12 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     );
   }
 
-  Widget _buildDragFeedback(List<PlayingCard> stack, double w, double h) {
+  Widget _buildDragFeedback(
+    List<PlayingCard> stack,
+    double w,
+    double h, {
+    double artworkScale = 1,
+  }) {
     final totalHeight = h + _cardOffset(stack, stack.length - 1, w);
     return IgnorePointer(
       child: Material(
@@ -964,7 +1175,12 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
               for (int i = 0; i < stack.length; i++)
                 Positioned(
                   top: _cardOffset(stack, i, w),
-                  child: CardWidget(card: stack[i], width: w, height: h),
+                  child: CardWidget(
+                    card: stack[i],
+                    width: w,
+                    height: h,
+                    artworkScale: artworkScale,
+                  ),
                 ),
             ],
           ),
@@ -984,6 +1200,24 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildHintableCard(PlayingCard card, double w, double h) {
+    final pickup = _wandPickup;
+    if (pickup != null) {
+      final recycle = pickup.type == MagicWandActionType.recycleWaste;
+      if (pickup.cards.contains(card) ||
+          (recycle && identical(card, game.wasteTop))) {
+        if (recycle || pickup.from!.pile == WandPileType.waste) {
+          final below = recycle ? null : game.wasteUnderTop;
+          return below == null
+              ? _buildEmptySlotBox()
+              : CardWidget(card: below, width: w, height: h);
+        }
+        if (pickup.from!.pile == WandPileType.tableau) {
+          return SizedBox(width: w, height: h);
+        }
+        if (pickup.from!.depth == 0) return _buildEmptySlotBox();
+        // The next stock card has the same back.
+      }
+    }
     for (final transfer in _transfers) {
       if (!transfer.cards.any((c) => c.id == card.id)) continue;
       // Keep the destination's real tap/drag target live during travel.
@@ -1109,6 +1343,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   void _handleDragStarted(List<PlayingCard> stack) {
+    _wandFlight.stop();
+    _cancelAutoPlay();
     _startTimerIfNeeded();
     setState(() {
       _clearFlight();
@@ -1240,57 +1476,73 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     );
   }
 
-  Future<void> _animateWandPlan(
-    MagicWandPlan plan,
-    double cardWidth,
-    double cardHeight,
-  ) async {
-    for (final action in plan.actions) {
-      final from = action.from;
-      final to = action.to;
-      if (from == null || to == null || action.cards.isEmpty) continue;
-      await _animateWandAction(action, cardWidth, cardHeight);
-      if (!mounted) return;
-      await Future.delayed(const Duration(milliseconds: 120));
-    }
-  }
-
   Future<void> _animateWandAction(
     MagicWandAction action,
     double cardWidth,
     double cardHeight,
   ) async {
-    final overlay = Overlay.of(context);
-
-    final start = _computeGlobalOffset(action.from!, cardWidth);
-    final end = _computeGlobalOffset(action.to!, cardWidth);
+    final layer =
+        _flightLayerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (layer == null || !layer.hasSize) return;
+    final recycle = action.type == MagicWandActionType.recycleWaste;
+    final from =
+        recycle
+            ? const WandLocation(pile: WandPileType.waste, index: 0, depth: 0)
+            : action.from!;
+    final to =
+        recycle
+            ? const WandLocation(pile: WandPileType.stock, index: 0, depth: 0)
+            : action.to ??
+                from; // A tableau flip lands back in the same column.
+    final start = _computeGlobalOffset(from, cardWidth);
+    final end = _computeGlobalOffset(to, cardWidth);
     if (start == null || end == null) return;
 
-    // Keep the original orientation during travel. The game applies the
-    // reveal and the move together when the Wand reaches its destination.
-    final cards = action.cards.map((card) => card.clone()).toList();
-    final entry = OverlayEntry(
-      builder: (overlayContext) {
-        return AnimatedBuilder(
-          animation: _wandFlight,
-          child: _buildDragFeedback(cards, cardWidth, cardHeight),
-          builder: (_, child) {
-            final progress = Curves.easeInOut.transform(_wandFlight.value);
-            final offset = Offset.lerp(start, end, progress)!;
-            return Positioned(left: offset.dx, top: offset.dy, child: child!);
-          },
-        );
-      },
-    );
+    final cards =
+        recycle
+            ? [game.wasteTop!.clone()]
+            : action.cards.map((card) => card.clone()).toList();
+    final flip = recycle || !cards.first.isFaceUp;
+    final after = flip ? (cards.first.clone()..isFaceUp = !recycle) : null;
+    setState(() {
+      _wandPickup = action;
+      _wandReveal = WandRevealFlight(
+        animation: _wandFlight,
+        start: layer.globalToLocal(start),
+        end: layer.globalToLocal(end),
+        area: layer.size,
+        cardSize: Size(cardWidth, cardHeight),
+        before: _buildDragFeedback(
+          cards,
+          cardWidth,
+          cardHeight,
+          artworkScale: WandRevealFlight.focusScale,
+        ),
+        after:
+            after == null
+                ? null
+                : _buildDragFeedback(
+                  [after],
+                  cardWidth,
+                  cardHeight,
+                  artworkScale: WandRevealFlight.focusScale,
+                ),
+      );
+    });
 
-    overlay.insert(entry);
+    var feltReveal = false;
+    void tickAtReveal() {
+      if (!feltReveal && _wandFlight.value >= WandRevealFlight.revealEdge) {
+        feltReveal = true;
+        HapticFeedback.selectionClick();
+      }
+    }
+
+    _wandFlight.addListener(tickAtReveal);
     try {
       await _wandFlight.forward(from: 0).orCancel;
-    } on TickerCanceled {
-      // Undo, another move, or disposal can cancel this flight.
     } finally {
-      entry.remove();
-      entry.dispose();
+      _wandFlight.removeListener(tickAtReveal);
     }
   }
 

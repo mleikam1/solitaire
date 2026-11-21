@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:solitaire/appearance/appearance.dart';
 import 'package:solitaire/appearance/table_surface.dart';
 import 'package:solitaire/main.dart';
+import 'package:solitaire/game/deal_spec.dart';
 import 'package:solitaire/pages/solitaire_game_page.dart';
 import 'package:solitaire/widgets/bottom_toolbar.dart';
 import 'package:solitaire/widgets/card_widget.dart';
@@ -29,7 +30,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await tester.pumpAndSettle();
       final board = find.byType(SolitaireGamePage);
-      final originalBoard = tester.state(board);
+      final originalBoard = tester.state<SolitaireGamePageState>(board);
       final cards = find.descendant(
         of: board,
         matching: find.byType(CardWidget),
@@ -72,11 +73,14 @@ void main() {
       expectBoardArtwork(DeckStyle.starlineArcade);
       expect(find.text('Time: 00:00'), findsOneWidget);
       expect(find.text('Moves: 0'), findsOneWidget);
+      // Fix the board before using the Wand so a random deal cannot trigger
+      // a longer foundation run and change the expected move count.
+      originalBoard.game.startDeal(DealSpec(seed: 3));
+      await tester.pumpAndSettle();
       // Spend one of each power-up to make resets detectable.
       await tester.tap(find.byTooltip('Wand'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
       await tester.pump();
       expect(toolbar().wandCount, 2);
       await tester.tap(find.byTooltip('Freeze'));
@@ -93,7 +97,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Settings'));
       await tester.pumpAndSettle();
-      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
       final koi = find.byKey(const ValueKey('deck-koi_kingdom'));
       await tester.ensureVisible(koi);
       await tester.tap(koi);
@@ -103,7 +107,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('table-silverball_arcade')));
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));
-      await tester.tap(find.byTooltip('Close Appearance'));
+      await tester.tap(find.byTooltip('Close Settings'));
       await tester.pumpAndSettle();
 
       expect(tester.state(board), same(originalBoard));

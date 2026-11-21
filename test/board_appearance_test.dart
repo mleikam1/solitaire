@@ -10,6 +10,7 @@ import 'package:solitaire/models/card_model.dart';
 import 'package:solitaire/pages/solitaire_game_page.dart';
 import 'package:solitaire/widgets/card_flight.dart';
 import 'package:solitaire/widgets/card_widget.dart';
+import 'package:solitaire/widgets/wand_reveal_flight.dart';
 
 /// Build a legal descending run over a concealed ace, keeping all 52 cards.
 KlondikeGame preparedDeal() {
@@ -619,8 +620,9 @@ void main() {
       await tester.tap(find.byTooltip('Wand'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 95));
-      // The original stays on the board while a clone flies in the overlay.
-      expect(cardWidgets(moving.id), findsNWidgets(2));
+      // Its source is covered while the flying copy is visible.
+      expect(cardWidgets(moving.id), findsOneWidget);
+      expect(find.byType(WandRevealFlight), findsOneWidget);
       await tester.tap(find.byTooltip('Undo'));
       await tester.pump();
       await tester.pump();
@@ -637,7 +639,64 @@ void main() {
   );
 
   testWidgets(
-    'Wand reveals the extracted ace on landing and Undo conceals it when returning it',
+    'leaving a Wand reveal for Settings or the background cancels the unspent move',
+    (tester) async {
+      final game = await openBoard(tester);
+      final original = game.snapshot().encode();
+      Future<void> reveal() async {
+        await tester.tap(find.byTooltip('Wand'));
+        await tester.pump();
+        await tester.pump(WandRevealFlight.duration * 0.55);
+        expect(find.byType(WandRevealFlight), findsOneWidget);
+      }
+
+      await reveal();
+      await tester.tap(find.byTooltip('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.byType(WandRevealFlight), findsNothing);
+      expect(game.snapshot().encode(), original);
+      await tester.tap(find.byTooltip('Close Settings'));
+      await tester.pumpAndSettle();
+      await reveal();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.byType(WandRevealFlight), findsNothing);
+      expect(game.snapshot().encode(), original);
+      await reveal();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(WandRevealFlight.duration);
+      expect(tester.takeException(), isNull);
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'reduced motion applies a Wand immediately and preserves Undo',
+    (tester) async {
+      final dispatcher = tester.binding.platformDispatcher;
+      dispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+      final game = await openBoard(tester);
+      final original = game.snapshot().encode();
+      final action = game.planMagicWand()!.actions.single;
+      await tester.tap(find.byTooltip('Wand'));
+      await tester.pump();
+      expect(find.byType(WandRevealFlight), findsNothing);
+      expect(game.foundationTop(action.to!.index), same(action.cards.single));
+      expect(game.wandCount, 2);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), original);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'Wand lifts, reveals and holds the selected ace before landing; Undo conceals it',
     (tester) async {
       final game = await openBoard(tester);
       final original = game.snapshot().encode();
@@ -665,9 +724,38 @@ void main() {
       expect((middle - start).distance, greaterThan(8));
       expect(assetOf(tester, flight), DeckStyle.koiKingdom.backAsset);
       expect(ace.isFaceUp, isFalse);
-      await tester.pump(const Duration(milliseconds: 220));
-      await tester.pump(const Duration(milliseconds: 150));
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final held = tester.getRect(flight);
+      expect(held.width, greaterThan(55));
+      expect(assetOf(tester, flight), DeckStyle.koiKingdom.faceAsset(ace));
+      // Only the flying copy turns. The real deal and all other backs stay put.
+      expect(game.snapshot().encode(), original);
+      for (final widget in tester.widgetList<CardWidget>(
+        find.byType(CardWidget),
+      )) {
+        if (widget.card.id != ace.id && !widget.card.isFaceUp) {
+          expect(
+            assetOf(tester, cardWidgets(widget.card.id)),
+            DeckStyle.koiKingdom.backAsset,
+          );
+        }
+      }
+      await tester.pump(const Duration(milliseconds: 110));
+      expect(tester.getRect(flight), held);
+      await tester.pump(const Duration(milliseconds: 200));
+      final traveling = tester.getCenter(flight);
+      final preview = tester.widget<WandRevealFlight>(
+        find.byType(WandRevealFlight),
+      );
+      final destination =
+          tester.getTopLeft(find.byType(WandRevealFlight)) +
+          preview.end +
+          preview.cardSize.center(Offset.zero);
+      expect(
+        (traveling - destination).distance,
+        lessThan((held.center - destination).distance),
+      );
+      await tester.pumpAndSettle();
       expect(flight, findsNothing);
       expect(game.foundationTop(plan.to!.index), same(ace));
       expect(ace.isFaceUp, isTrue);

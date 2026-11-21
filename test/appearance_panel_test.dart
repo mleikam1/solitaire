@@ -160,11 +160,36 @@ void main() {
     await tester.tap(find.text('Restore Defaults'));
     await tester.pumpAndSettle();
     expectSample(tester, DeckStyle.starlineArcade, TableStyle.originalGreen);
-    await tester.tap(find.byTooltip('Close Appearance'));
+    await tester.tap(find.byTooltip('Close Settings'));
     await tester.pumpAndSettle();
-    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Settings'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Play setting is immediate, persists, and is independent of appearance',
+    (tester) async {
+      final settings = await openPanel(tester, const Size(320, 568));
+      await tester.tap(find.text('Play'));
+      await tester.pumpAndSettle();
+      expect(settings.autoCollectFoundations, isTrue);
+      await tester.tap(find.text('Auto-collect by suit'));
+      await tester.pumpAndSettle();
+      expect(settings.autoCollectFoundations, isFalse);
+
+      await tester.tap(find.text('Deck'));
+      await tester.pumpAndSettle();
+      await choose(tester, 'deck-koi_kingdom');
+      await tester.tap(find.text('Restore Defaults'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Close Settings'));
+      await tester.pumpAndSettle();
+      final saved = await AppearanceController.load();
+      expect(saved.autoCollectFoundations, isFalse);
+      expect(saved.deck, DeckStyle.starlineArcade);
+      expect(saved.table, TableStyle.originalGreen);
+    },
+  );
 
   testWidgets('Tablet panel shows illustrated tiles and a mixed sample', (
     tester,
@@ -179,7 +204,7 @@ void main() {
     await tester.pumpAndSettle();
     await choose(tester, 'table-${TableStyle.silverballArcade.id}');
     expectSample(tester, DeckStyle.koiKingdom, TableStyle.silverballArcade);
-    expect(find.byTooltip('Close Appearance').hitTestable(), findsOneWidget);
+    expect(find.byTooltip('Close Settings').hitTestable(), findsOneWidget);
     expect(find.text('Restore Defaults').hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

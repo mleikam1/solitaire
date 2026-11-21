@@ -65,14 +65,22 @@ enum TableStyle {
 }
 
 class AppearanceController extends ChangeNotifier {
-  AppearanceController._(this._preferences, this._deck, this._table);
+  AppearanceController._(
+    this._preferences,
+    this._deck,
+    this._table,
+    this._autoCollectFoundations,
+  );
 
   // Save the two IDs together so Restore Defaults is also a single write.
   static const _key = 'appearance.deckAndTable';
+  static const _autoCollectKey = 'gameplay.autoCollectFoundations';
   static const _defaultDeck = DeckStyle.starlineArcade;
   final SharedPreferences _preferences;
   DeckStyle _deck;
   TableStyle _table;
+  bool _autoCollectFoundations;
+  bool get autoCollectFoundations => _autoCollectFoundations;
   DeckStyle get deck => _deck;
   TableStyle get table => _table;
 
@@ -81,6 +89,7 @@ class AppearanceController extends ChangeNotifier {
     final ids = preferences.get(_key);
     final deckId = ids is List && ids.isNotEmpty ? ids.first : null;
     final tableId = ids is List && ids.length >= 2 ? ids[1] : null;
+    final autoCollect = preferences.get(_autoCollectKey);
     return AppearanceController._(
       preferences,
       DeckStyle.values.firstWhere(
@@ -91,7 +100,18 @@ class AppearanceController extends ChangeNotifier {
         (t) => t.id == tableId,
         orElse: () => TableStyle.originalGreen,
       ),
+      autoCollect is bool ? autoCollect : true,
     );
+  }
+
+  Future<void> setAutoCollectFoundations(bool enabled) async {
+    if (enabled == _autoCollectFoundations) return;
+    _autoCollectFoundations = enabled;
+    final saved = _preferences.setBool(_autoCollectKey, enabled);
+    notifyListeners();
+    if (!await saved) {
+      throw StateError('Could not save the auto-collect setting.');
+    }
   }
 
   Future<void> setDeck(DeckStyle value) => _select(value, _table);

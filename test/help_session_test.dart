@@ -11,7 +11,9 @@ import 'package:solitaire/game/klondike_game.dart';
 import 'package:solitaire/models/card_model.dart';
 import 'package:solitaire/pages/solitaire_game_page.dart';
 import 'package:solitaire/widgets/bottom_toolbar.dart';
+import 'package:solitaire/widgets/victory_celebration.dart';
 import 'package:solitaire/widgets/card_widget.dart';
+import 'package:solitaire/widgets/wand_reveal_flight.dart';
 
 Future<SolitaireGamePageState> _open(
   WidgetTester tester,
@@ -178,6 +180,14 @@ void main() {
       );
       await tester.pump();
       expect(toolbar().onWand, isNull);
+      final picked = find.byWidgetPredicate(
+        (w) => w is CardWidget && w.card.id == 26,
+      );
+      expect(picked, findsOneWidget);
+      expect(
+        find.ancestor(of: picked, matching: find.byType(WandRevealFlight)),
+        findsOneWidget,
+      );
       page.game.drawFromStock();
       final afterDraw = page.captureHelp().board.encode();
       await tester.pump(const Duration(milliseconds: 400));
@@ -249,11 +259,28 @@ void main() {
     expect(result.deal.seed, 2875);
     expect(result.moves, almostDone.board.moves + 1);
     expect(result.elapsedMilliseconds, 4321);
-    await tester.pump(const Duration(seconds: 5));
+    expect(find.byType(VictoryCelebration), findsNothing);
+    await tester.pumpAndSettle();
+    final victory = tester.widget<VictoryCelebration>(
+      find.byType(VictoryCelebration),
+    );
+    expect(victory.score, game.score);
+    expect(victory.foundations, hasLength(4));
+    for (final rect in victory.foundations) {
+      expect(rect.width, closeTo(390 / 8.5, .01));
+      expect(rect.height, closeTo(rect.width * 1.4, .01));
+    }
+    expect(find.text('Congratulations!'), findsOneWidget);
     expect(page.completedDeal, result);
-    await tester.tap(find.widgetWithIcon(ElevatedButton, Icons.undo));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(VictoryCelebration),
+        matching: find.text('Undo'),
+      ),
+    );
     await tester.pump(const Duration(seconds: 1));
     expect(page.completedDeal, isNull);
+    expect(find.byType(VictoryCelebration), findsNothing);
     expect(page.captureHelp().elapsedMilliseconds, 5321);
     expect(game.startedFromSnapshot, isFalse);
 
