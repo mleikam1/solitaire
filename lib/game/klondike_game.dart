@@ -894,6 +894,72 @@ class KlondikeGame extends ChangeNotifier {
     return null;
   }
 
+  /// Describe the next undo without changing the position or consuming history.
+  /// Cards are in their restored pile order, bottom to top. A hidden Wand
+  /// extraction can shift its neighbors' depths without moving those cards.
+  List<UndoCardChange> previewUndo() {
+    if (_history.isEmpty) return const [];
+    final previous = _history.last;
+    final current = <int, (PlayingCard, WandLocation)>{};
+    final restored = <(PlayingCard, WandLocation)>[];
+
+    void indexPile(
+      WandPileType type,
+      int index,
+      List<PlayingCard> now,
+      List<PlayingCard> before,
+    ) {
+      for (var depth = 0; depth < now.length; depth++) {
+        final card = now[depth];
+        current[card.id] = (
+          card,
+          WandLocation(pile: type, index: index, depth: depth),
+        );
+      }
+      for (var depth = 0; depth < before.length; depth++) {
+        restored.add((
+          before[depth],
+          WandLocation(pile: type, index: index, depth: depth),
+        ));
+      }
+    }
+
+    indexPile(WandPileType.stock, 0, _stock, previous.stock);
+    indexPile(WandPileType.waste, 0, _waste, previous.waste);
+    for (var i = 0; i < _foundations.length; i++) {
+      indexPile(
+        WandPileType.foundation,
+        i,
+        _foundations[i],
+        previous.foundations[i],
+      );
+    }
+    for (var i = 0; i < _tableau.length; i++) {
+      indexPile(WandPileType.tableau, i, _tableau[i], previous.tableau[i]);
+    }
+
+    final changes = <UndoCardChange>[];
+    for (final (before, to) in restored) {
+      final entry = current[before.id];
+      if (entry == null) continue;
+      final (now, from) = entry;
+      if (from.pile == to.pile &&
+          from.index == to.index &&
+          now.isFaceUp == before.isFaceUp) {
+        continue;
+      }
+      changes.add(
+        UndoCardChange(
+          card: now.clone(),
+          from: from,
+          to: to,
+          faceUpAfterUndo: before.isFaceUp,
+        ),
+      );
+    }
+    return changes;
+  }
+
   bool undo() {
     if (_history.isEmpty) return false;
     final snapshot = _history.removeLast();
@@ -1036,6 +1102,23 @@ class WandLocation {
   final WandPileType pile;
   final int index;
   final int depth;
+}
+
+/// One card that changes pile or turns over when the last move is undone.
+class UndoCardChange {
+  const UndoCardChange({
+    required this.card,
+    required this.from,
+    required this.to,
+    required this.faceUpAfterUndo,
+  });
+
+  final PlayingCard card;
+  final WandLocation from;
+  final WandLocation to;
+  final bool faceUpAfterUndo;
+
+  bool get changesPile => from.pile != to.pile || from.index != to.index;
 }
 
 class MagicWandAction {

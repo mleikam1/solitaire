@@ -15,6 +15,7 @@ class CardFlight extends StatelessWidget {
     required this.cards,
     required this.offsets,
     required this.flip,
+    this.packetSize = 1,
     required this.buildCard,
   }) : assert(cards.length > 0),
        assert(cards.length == offsets.length),
@@ -29,6 +30,9 @@ class CardFlight extends StatelessWidget {
   final List<PlayingCard> cards;
   final List<double> offsets;
   final bool flip;
+  // A recycled pile turns as one packet, showing only its outer card.
+  final int packetSize;
+  static bool showsFinalSide(double progress) => progress >= 0.4;
   final Widget Function(PlayingCard card, bool faceUp) buildCard;
 
   @override
@@ -60,8 +64,11 @@ class CardFlight extends StatelessWidget {
     // At the edge the visible side changes. The front starts edge-on in the
     // opposite direction and ends upright, so the rank is never mirrored.
     final turn = flip ? Curves.easeInOut.transform((t / 0.8).clamp(0, 1)) : 0.0;
-    final showFront = t >= 0.4;
-    final angle = flip ? math.pi * (showFront ? turn - 1 : turn) : 0.0;
+    final pastEdge = showsFinalSide(t);
+    final showFront = pastEdge == cards.first.isFaceUp;
+    final direction = cards.first.isFaceUp ? 1 : -1;
+    final angle =
+        flip ? direction * math.pi * (pastEdge ? turn - 1 : turn) : 0.0;
     final pose =
         Matrix4.identity()
           ..setEntry(3, 2, flip ? 0.12 / rect.width : 0.0)
@@ -101,6 +108,22 @@ class CardFlight extends StatelessWidget {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
+                  // Let the edges separate during travel, then settle squarely
+                  // on the pile. Buried faces never appear in the packet.
+                  for (var edge = math.min(packetSize - 1, 3); edge > 0; edge--)
+                    Positioned(
+                      left: edge * rect.width * 0.035 * airborne,
+                      top: edge * rect.width * 0.04 * airborne,
+                      width: rect.width,
+                      height: rect.height,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEEECE2),
+                          border: Border.all(color: Colors.black38),
+                          borderRadius: radius,
+                        ),
+                      ),
+                    ),
                   for (var i = 0; i < cards.length; i++)
                     Positioned(
                       top: offsets[i],
