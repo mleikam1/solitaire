@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/card_model.dart';
 
 enum DeckStyle {
+  starlineArcade('starline_arcade', 'Starline Arcade'),
   originalClassic('original_classic', 'Original Classic'),
   silverball('silverball', 'Silverball'),
   moonshot59('moonshot_59', 'Moonshot ’59'),
@@ -68,6 +69,7 @@ class AppearanceController extends ChangeNotifier {
 
   // Save the two IDs together so Restore Defaults is also a single write.
   static const _key = 'appearance.deckAndTable';
+  static const _defaultDeck = DeckStyle.starlineArcade;
   final SharedPreferences _preferences;
   DeckStyle _deck;
   TableStyle _table;
@@ -83,7 +85,7 @@ class AppearanceController extends ChangeNotifier {
       preferences,
       DeckStyle.values.firstWhere(
         (d) => d.id == deckId,
-        orElse: () => DeckStyle.originalClassic,
+        orElse: () => _defaultDeck,
       ),
       TableStyle.values.firstWhere(
         (t) => t.id == tableId,
@@ -95,7 +97,7 @@ class AppearanceController extends ChangeNotifier {
   Future<void> setDeck(DeckStyle value) => _select(value, _table);
   Future<void> setTable(TableStyle value) => _select(_deck, value);
   Future<void> restoreDefaults() =>
-      _select(DeckStyle.originalClassic, TableStyle.originalGreen);
+      _select(_defaultDeck, TableStyle.originalGreen);
 
   Future<void> _select(DeckStyle deck, TableStyle table) async {
     if (_deck == deck && _table == table) return;

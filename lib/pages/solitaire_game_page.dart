@@ -43,7 +43,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   late final AnimationController _wandFlight;
   late final AnimationController _travel;
   final _flightLayerKey = GlobalKey();
-  _CardTransfer? _transfer;
+  List<_CardTransfer> _transfers = const [];
   bool _reduceMotion = false;
   Size? _viewSize;
 
@@ -109,8 +109,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       vsync: this,
     );
     _travel = AnimationController(vsync: this)..addStatusListener((status) {
-      if (status == AnimationStatus.completed && _transfer != null) {
-        setState(() => _transfer = null);
+      if (status == AnimationStatus.completed && _transfers.isNotEmpty) {
+        setState(() => _transfers = const []);
       }
     });
     game.addListener(_onGameChanged);
@@ -127,11 +127,13 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
 
   void _clearFlight() {
     _travel.stop();
-    _transfer = null;
+    _transfers = const [];
   }
 
   void _onGameChanged() {
     _clearFlight();
+    // A move or Undo invalidates a Wand flight still awaiting its landing.
+    if (_wandFlight.isAnimating) _wandFlight.stop();
     _boardRevision++;
     _syncClock();
     _hintTimer?.cancel();
@@ -294,7 +296,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
-    if (!_foreground && _transfer != null) setState(_clearFlight);
+    if (!_foreground && _transfers.isNotEmpty) setState(_clearFlight);
     _syncClock();
   }
 
@@ -533,9 +535,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           onSettings: () => showAppearancePanel(context),
           onUndo:
               game.canUndo
-                  ? () {
-                    game.undo();
-                  }
+                  ? () => _undoWithFlight(cardWidth, cardHeight)
                   : null,
           freezeCount: game.freezeCount,
           wandCount: game.wandCount,
@@ -556,12 +556,11 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildPlayArea({required Widget child}) {
-    final transfer = _transfer;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: NotificationListener<ScrollStartNotification>(
         onNotification: (_) {
-          if (_transfer != null) setState(_clearFlight);
+          if (_transfers.isNotEmpty) setState(_clearFlight);
           return false;
         },
         child: Stack(
@@ -573,21 +572,25 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
               onPointerCancel: (_) => _clearDraggingCards(),
               child: RepaintBoundary(child: child),
             ),
-            if (transfer != null)
+            for (final transfer in _transfers)
               AnimatedBuilder(
                 animation: _travel,
                 builder:
                     (_, _) => CardFlight(
-                      key: const ValueKey('card-flight'),
+                      key: transfer.key,
                       progress: _travel.value,
                       start: transfer.start,
                       end: transfer.end,
                       cards: transfer.cards,
                       offsets: transfer.offsets,
                       flip: transfer.flip,
+                      packetSize: transfer.packetSize,
                       buildCard:
                           (card, faceUp) => CardWidget(
-                            card: faceUp ? card : transfer.back!,
+                            card:
+                                faceUp == card.isFaceUp
+                                    ? card
+                                    : transfer.otherSide!,
                             width: transfer.start.width,
                             height: transfer.start.height,
                           ),
@@ -662,6 +665,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     final transfer = _CardTransfer(
       start: layer.globalToLocal(origin) & size,
       end: layer.globalToLocal(landing) & size,
+      destination: destination,
       cards: cards,
       offsets: List.generate(cards.length, (i) => _cardOffset(cards, i, width)),
       covered: switch (destination.pile) {
@@ -669,19 +673,122 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
         WandPileType.foundation => previousFoundations[destination.index],
         _ => null,
       },
-      back: flip ? (card.clone()..isFaceUp = false) : null,
+      flip: flip,
     );
-    setState(() => _transfer = transfer);
-    _travel.duration = flip ? CardFlight.drawDuration : CardFlight.moveDuration;
-    _travel.forward(from: 0);
-    // Shortening the source column can clamp the tableau's scroll position
-    // during layout. Aim for the actual landing spot after that adjustment.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !identical(_transfer, transfer)) return;
-      final offset = _computeGlobalOffset(destination, width);
-      if (offset != null) transfer.end = layer.globalToLocal(offset) & size;
-    });
+    _startFlights([transfer], layer);
     return true;
+  }
+
+  void _startFlights(List<_CardTransfer> transfers, RenderBox layer) {
+    if (transfers.isEmpty) return;
+    setState(() => _transfers = transfers);
+    _travel.duration =
+        transfers.any((t) => t.flip)
+            ? CardFlight.drawDuration
+            : CardFlight.moveDuration;
+    _travel.forward(from: 0);
+    // Recheck after layout in case a shorter column clamped the scroll offset.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(_transfers, transfers)) return;
+      for (final flight in transfers) {
+        final offset = _computeGlobalOffset(
+          flight.destination,
+          flight.end.width,
+        );
+        if (offset != null) {
+          flight.end = layer.globalToLocal(offset) & flight.end.size;
+        }
+      }
+    });
+  }
+
+  PlayingCard? _pileCover(WandLocation location) => switch (location.pile) {
+    WandPileType.stock => game.stockTop,
+    WandPileType.waste => game.wasteTop,
+    WandPileType.foundation => game.foundationTop(location.index),
+    WandPileType.tableau => null, // Underlying tableau cards are already drawn.
+  };
+
+  // When Undo interrupts a flight, depart from its current screen position
+  // and visible side, even if the model has already committed the landing.
+  (Offset?, bool) _undoOrigin(
+    UndoCardChange change,
+    RenderBox layer,
+    double width,
+  ) {
+    for (final flight in _transfers) {
+      final i = flight.cards.indexWhere((c) => c.id == change.card.id);
+      if (i < 0) continue;
+      final box = flight.key.currentContext?.findRenderObject() as RenderBox?;
+      final local = Offset(0, flight.offsets[i]);
+      final origin =
+          box?.localToGlobal(local) ??
+          layer.localToGlobal(flight.start.topLeft + local);
+      final isUp = flight.cards[i].isFaceUp;
+      final turned = !flight.flip || CardFlight.showsFinalSide(_travel.value);
+      return (origin, turned ? isUp : !isUp);
+    }
+    return (_computeGlobalOffset(change.from, width), change.card.isFaceUp);
+  }
+
+  void _undoWithFlight(double width, double height) {
+    final layer =
+        _flightLayerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (_reduceMotion || !_foreground || layer == null || !layer.hasSize) {
+      game.undo();
+      return;
+    }
+
+    final changes = game.previewUndo();
+    final groups = <List<UndoCardChange>>[];
+    final moved =
+        <(WandPileType, int, WandPileType, int), List<UndoCardChange>>{};
+    for (final c in changes) {
+      if (c.changesPile) {
+        final route = (c.from.pile, c.from.index, c.to.pile, c.to.index);
+        (moved[route] ??= []).add(c);
+      } else {
+        groups.add([c]); // A turned card is painted beneath its returning run.
+      }
+    }
+    groups.addAll(moved.values);
+    final origins = {for (final c in changes) c: _undoOrigin(c, layer, width)};
+    final covers = {for (final c in changes) c: _pileCover(c.to)};
+    if (!game.undo()) return;
+
+    final flights = <_CardTransfer>[];
+    for (final group in groups) {
+      final packet =
+          group.first.from.pile == WandPileType.stock &&
+          group.first.to.pile == WandPileType.waste;
+      // Waste restores from bottom to top. Its outer face is the packet's
+      // final card; individual buried faces aren't exposed while it turns.
+      final visible = packet ? [group.last] : group;
+      final first = visible.first;
+      final (origin, wasFaceUp) = origins[first]!;
+      final landing = _computeGlobalOffset(first.to, width);
+      if (origin == null || landing == null) continue;
+      final cards = [
+        for (final c in visible) c.card.clone()..isFaceUp = c.faceUpAfterUndo,
+      ];
+      final size = Size(width, height);
+      flights.add(
+        _CardTransfer(
+          start: layer.globalToLocal(origin) & size,
+          end: layer.globalToLocal(landing) & size,
+          destination: first.to,
+          cards: cards,
+          offsets: List.generate(
+            cards.length,
+            (i) => _cardOffset(cards, i, width),
+          ),
+          covered: covers[first],
+          flip: cards.length == 1 && wasFaceUp != cards.first.isFaceUp,
+          packetSize: packet ? group.length : 1,
+        ),
+      );
+    }
+    _startFlights(flights, layer);
   }
 
   // ===== UI helpers =====
@@ -877,20 +984,26 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildHintableCard(PlayingCard card, double w, double h) {
-    final transfer = _transfer;
-    if (transfer != null && transfer.cards.contains(card)) {
+    for (final transfer in _transfers) {
+      if (!transfer.cards.any((c) => c.id == card.id)) continue;
       // Keep the destination's real tap/drag target live during travel.
       final below = transfer.covered;
       return Semantics(
         image: true,
-        label: '${card.displayValue} of ${card.suit.name}',
+        label:
+            card.isFaceUp
+                ? '${card.displayValue} of ${card.suit.name}'
+                : 'Face-down card',
         excludeSemantics: true,
         child: SizedBox(
           width: w,
           height: h,
           child:
               below == null
-                  ? (transfer.flip ? _buildEmptySlotBox() : null)
+                  ? (transfer.destination.pile == WandPileType.stock ||
+                          transfer.destination.pile == WandPileType.waste
+                      ? _buildEmptySlotBox()
+                      : null)
                   : CardWidget(card: below, width: w, height: h),
         ),
       );
@@ -1174,7 +1287,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     try {
       await _wandFlight.forward(from: 0).orCancel;
     } on TickerCanceled {
-      // The board was disposed during the flight.
+      // Undo, another move, or disposal can cancel this flight.
     } finally {
       entry.remove();
       entry.dispose();
@@ -1246,16 +1359,24 @@ class _CardTransfer {
     required this.cards,
     required this.offsets,
     required this.covered,
-    required this.back,
-  });
+    required this.destination,
+    required bool flip,
+    this.packetSize = 1,
+  }) : otherSide =
+           flip
+               ? (cards.single.clone()..isFaceUp = !cards.single.isFaceUp)
+               : null;
 
   final Rect start;
   Rect end;
   final List<PlayingCard> cards;
   final List<double> offsets;
   final PlayingCard? covered;
-  final PlayingCard? back;
-  bool get flip => back != null;
+  final WandLocation destination;
+  final key = GlobalKey();
+  final PlayingCard? otherSide;
+  final int packetSize;
+  bool get flip => otherSide != null;
 }
 
 class _AutoDropTarget {

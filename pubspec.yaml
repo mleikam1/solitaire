@@ -64,6 +64,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/cards/starline_arcade/
     - assets/cards/silverball/
     - assets/cards/moonshot_59/
     - assets/cards/koi_kingdom/

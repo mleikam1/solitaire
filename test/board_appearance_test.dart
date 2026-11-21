@@ -121,6 +121,7 @@ void main() {
       final five = game.tableau[0][2];
       final seven = game.tableau[1].single;
       final before = game.moves;
+      final original = game.snapshot().encode();
       final sixRect = tester.getRect(cardWidgets(six.id));
       final fiveRect = tester.getRect(cardWidgets(five.id));
       expect(sixRect.width / sixRect.height, closeTo(5 / 7, 0.001));
@@ -171,8 +172,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(game.moves, before + 1);
       expect(game.tableau[1].map((c) => c.id), [seven.id, six.id, five.id]);
+      final dropped = tester.getRect(cardWidgets(six.id));
+      final revealedAce = game.tableau[0].single;
+      final aceFlip = find.descendant(
+        of: flight,
+        matching: cardWidgets(revealedAce.id),
+      );
       await tester.tap(find.byTooltip('Undo'));
       await tester.pump();
+      expect(game.snapshot().encode(), original);
+      expect(
+        assetOf(tester, aceFlip),
+        DeckStyle.koiKingdom.faceAsset(revealedAce),
+      );
+      expect(tester.getRect(flyingSix), rectMoreOrLessEquals(dropped));
+      expect(
+        tester.getTopLeft(flyingFive).dy - tester.getTopLeft(flyingSix).dy,
+        closeTo(fiveRect.top - sixRect.top, 1),
+      );
+      expect(assetOf(tester, flyingFive), DeckStyle.koiKingdom.faceAsset(five));
+      await tester.pump(CardFlight.moveDuration * 0.45);
+      expect(
+        tester.getCenter(flyingSix).dx,
+        inExclusiveRange(sixRect.center.dx, dropped.center.dx),
+      );
+      await tester.pump(CardFlight.drawDuration * 0.25);
+      expect(assetOf(tester, aceFlip), DeckStyle.koiKingdom.backAsset);
+      await tester.pumpAndSettle();
+      expect(flight, findsNothing);
+      expect(
+        tester.getRect(cardWidgets(six.id)),
+        rectMoreOrLessEquals(sixRect),
+      );
       expect(game.moves, before);
       expect(game.tableau[0].skip(1).map((c) => c.id), [six.id, five.id]);
       expect(game.tableau[0].first.isFaceUp, isFalse);
@@ -290,6 +321,7 @@ void main() {
         greaterThan(0.1),
       );
 
+      final beforeFoundation = game.snapshot().encode();
       final aceSource = tester.getCenter(cardWidgets(ace.id));
       await tester.tap(cardWidgets(ace.id));
       await tester.pump();
@@ -305,15 +337,32 @@ void main() {
       expect(game.foundationTop(0), same(ace));
       expect(cardWidgets(ace.id), findsOneWidget);
       expect(game.moves, 2);
+
+      final foundation = tester.getCenter(cardWidgets(ace.id));
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      expect(game.snapshot().encode(), beforeFoundation);
+      expect(tester.getCenter(flyingAce), offsetMoreOrLessEquals(foundation));
+      await tester.pump(CardFlight.moveDuration * 0.45);
+      expect(
+        tester.getCenter(flyingAce).dy,
+        inExclusiveRange(foundation.dy, aceSource.dy),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getCenter(cardWidgets(ace.id)),
+        offsetMoreOrLessEquals(aceSource),
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,
   );
 
   testWidgets(
-    'a stock draw lifts the chosen deck back, turns edge-on, and lands face up on the waste',
+    'stock draw and Undo fly in opposite directions and show opposite card sides',
     (tester) async {
       final game = await openBoard(tester);
+      final original = game.snapshot().encode();
       final drawn = game.stockTop!;
       final source = tester.getRect(cardWidgets(drawn.id));
       await tester.tapAt(source.center);
@@ -345,15 +394,55 @@ void main() {
         greaterThan(turning.center.dx),
       );
       expect(game.moves, 1);
+
+      final waste = tester.getRect(cardWidgets(drawn.id));
+      final underneath = game.stockTop!;
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      expect(game.snapshot().encode(), original);
+      expect(tester.getRect(flyingCard), rectMoreOrLessEquals(waste));
+      expect(cardWidgets(drawn.id), findsOneWidget);
+      expect(
+        tester.getRect(cardWidgets(underneath.id)),
+        rectMoreOrLessEquals(source),
+      );
+      expect(
+        assetOf(tester, cardWidgets(underneath.id)),
+        DeckStyle.koiKingdom.backAsset,
+      );
+      expect(
+        assetOf(tester, flyingCard),
+        DeckStyle.koiKingdom.faceAsset(drawn),
+      );
+      await tester.pump(CardFlight.drawDuration * 0.35);
+      final returning = tester.getRect(flyingCard);
+      expect(
+        returning.center.dx,
+        inExclusiveRange(source.center.dx, waste.center.dx),
+      );
+      expect(returning.width.abs(), lessThan(waste.width * 0.65));
+      await tester.pump(CardFlight.drawDuration * 0.30);
+      expect(assetOf(tester, flyingCard), DeckStyle.koiKingdom.backAsset);
+      await tester.pumpAndSettle();
+      expect(flight, findsNothing);
+      expect(
+        tester.getRect(cardWidgets(drawn.id)),
+        rectMoreOrLessEquals(source),
+      );
+      expect(
+        assetOf(tester, cardWidgets(drawn.id)),
+        DeckStyle.koiKingdom.backAsset,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,
   );
 
   testWidgets(
-    'a second draw replaces the flight, undo and New Deal clear it without a delayed move',
+    'rapid draws and repeated Undo replace flights; New Deal cancels the current flight',
     (tester) async {
       final game = await openBoard(tester);
+      final original = game.snapshot().encode();
       final stock = tester.getCenter(cardWidgets(game.stockTop!.id));
       final flight = find.byType(CardFlight);
       await tester.tapAt(stock);
@@ -374,9 +463,28 @@ void main() {
         assetOf(tester, cardWidgets(first.id)),
         DeckStyle.koiKingdom.faceAsset(first),
       );
+      final inFlight = find.descendant(
+        of: flight,
+        matching: cardWidgets(second.id),
+      );
+      await tester.pump(CardFlight.drawDuration * 0.35);
+      final interrupted = tester.getCenter(inFlight);
+      expect(assetOf(tester, inFlight), DeckStyle.koiKingdom.backAsset);
       await tester.tap(find.byTooltip('Undo'));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(game.snapshot().encode(), firstDraw);
+      expect((tester.getCenter(inFlight) - interrupted).distance, lessThan(2));
+      expect(assetOf(tester, inFlight), DeckStyle.koiKingdom.backAsset);
+      await tester.pump(CardFlight.drawDuration * 0.25);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      expect(game.snapshot().encode(), original);
+      expect(
+        find.descendant(of: flight, matching: cardWidgets(first.id)),
+        findsOneWidget,
+      );
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), original);
       expect(flight, findsNothing);
 
       await tester.tapAt(stock);
@@ -396,7 +504,35 @@ void main() {
   );
 
   testWidgets(
-    'reduced motion deals and moves cards immediately, and empty stock still recycles the waste',
+    'leaving the app mid-Undo keeps the restored board playable on resume',
+    (tester) async {
+      final game = await openBoard(tester);
+      final original = game.snapshot().encode();
+      final stock = tester.getCenter(cardWidgets(game.stockTop!.id));
+      await tester.tapAt(stock);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      final flight = find.byType(CardFlight);
+      expect(flight, findsOneWidget);
+      await tester.pump(CardFlight.drawDuration * 0.25);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(flight, findsNothing);
+      expect(game.snapshot().encode(), original);
+      await tester.tapAt(stock);
+      await tester.pumpAndSettle();
+      expect(game.moves, 1);
+      expect(game.wasteTop, isNotNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'reduced motion skips Undo travel; undoing a recycle restores the waste in order',
     (tester) async {
       final dispatcher = tester.binding.platformDispatcher;
       dispatcher.accessibilityFeaturesTestValue =
@@ -408,6 +544,7 @@ void main() {
       await tester.pump();
       expect(find.byType(CardFlight), findsNothing);
       expect(game.tableau[3].last, same(five));
+      final beforeDraw = game.snapshot().encode();
       final drawn = game.stockTop!;
       final stock = tester.getCenter(cardWidgets(drawn.id));
       await tester.tapAt(stock);
@@ -418,27 +555,92 @@ void main() {
         DeckStyle.koiKingdom.faceAsset(drawn),
       );
 
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      expect(find.byType(CardFlight), findsNothing);
+      expect(game.snapshot().encode(), beforeDraw);
+
       dispatcher.clearAccessibilityFeaturesTestValue();
       while (game.stockTop != null) {
         game.drawFromStock();
       }
       await tester.pump();
       final moves = game.moves;
+      final beforeRecycle = game.snapshot().encode();
+      final wasteTop = game.wasteTop!;
+      final waste = tester.getCenter(cardWidgets(wasteTop.id));
       await tester.tapAt(stock);
       await tester.pump();
       expect(find.byType(CardFlight), findsNothing);
-      expect(game.stockTop, same(drawn));
+      expect(game.stockTop!.id, drawn.id);
       expect(game.wasteTop, isNull);
       expect(game.moves, moves + 1);
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      final flight = find.byType(CardFlight);
+      final packet = find.descendant(
+        of: flight,
+        matching: find.byType(CardWidget),
+      );
+      expect(packet, findsWidgets);
+      expect(assetOf(tester, packet.last), DeckStyle.koiKingdom.backAsset);
+      expect((tester.getCenter(packet.last) - stock).distance, lessThan(5));
+      await tester.pump(CardFlight.drawDuration * 0.65);
+      final topInFlight = find.descendant(
+        of: flight,
+        matching: cardWidgets(wasteTop.id),
+      );
+      expect(
+        assetOf(tester, topInFlight),
+        DeckStyle.koiKingdom.faceAsset(wasteTop),
+      );
+      await tester.pumpAndSettle();
+      expect(flight, findsNothing);
+      expect(game.snapshot().encode(), beforeRecycle);
+      expect(
+        tester.getCenter(cardWidgets(wasteTop.id)),
+        offsetMoreOrLessEquals(waste),
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,
   );
 
   testWidgets(
-    'Wand moves the hidden card back frame by frame and reveals its face on the foundation',
+    'Undo during a Wand flight cancels the Wand and returns the previous draw',
     (tester) async {
       final game = await openBoard(tester);
+      final original = game.snapshot().encode();
+      await tester.tap(cardWidgets(game.stockTop!.id));
+      await tester.pumpAndSettle();
+
+      final moving = game.planMagicWand()!.actions.single.cards.single;
+      await tester.tap(find.byTooltip('Wand'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 95));
+      // The original stays on the board while a clone flies in the overlay.
+      expect(cardWidgets(moving.id), findsNWidgets(2));
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      await tester.pump();
+      expect(cardWidgets(moving.id), findsOneWidget);
+      expect(find.byType(CardFlight), findsOneWidget);
+      expect(game.snapshot().encode(), original);
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
+      expect(find.byType(CardFlight), findsNothing);
+      expect(game.snapshot().encode(), original);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'Wand reveals the extracted ace on landing and Undo conceals it when returning it',
+    (tester) async {
+      final game = await openBoard(tester);
+      final original = game.snapshot().encode();
       final ace = game.tableau.first.first;
       final wandCount = game.wandCount;
       final plan = game.planMagicWand()!.actions.single;
@@ -474,6 +676,25 @@ void main() {
         DeckStyle.koiKingdom.faceAsset(ace),
       );
       expect(game.wandCount, wandCount - 1);
+      final foundation = tester.getCenter(cardWidgets(ace.id));
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump();
+      final returning = find.descendant(
+        of: find.byType(CardFlight),
+        matching: cardWidgets(ace.id),
+      );
+      expect(tester.getCenter(returning), offsetMoreOrLessEquals(foundation));
+      expect(assetOf(tester, returning), DeckStyle.koiKingdom.faceAsset(ace));
+      await tester.pump(CardFlight.drawDuration * 0.65);
+      expect(assetOf(tester, returning), DeckStyle.koiKingdom.backAsset);
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), original);
+      expect(
+        assetOf(tester, cardWidgets(ace.id)),
+        DeckStyle.koiKingdom.backAsset,
+      );
+      expect(game.wandCount, wandCount);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,

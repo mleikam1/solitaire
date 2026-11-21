@@ -45,6 +45,97 @@ Map<String, Object?> position({
 }
 
 void main() {
+  group('Undo preview', () {
+    test('a draw returns to the stock face-down without consuming history', () {
+      final game = KlondikeGame.fromDeal(DealSpec(seed: 1));
+      final before = game.snapshot();
+      expect(game.previewUndo(), isEmpty);
+      game.drawFromStock();
+      final change = game.previewUndo().single;
+      expect(change.card.id, before.stock.last.id);
+      expect(change.card.isFaceUp, isTrue);
+      expect(change.from.pile, WandPileType.waste);
+      expect(change.to.pile, WandPileType.stock);
+      expect(change.to.depth, before.stock.length - 1);
+      expect(change.faceUpAfterUndo, isFalse);
+      change.card.isFaceUp = false;
+      expect(game.wasteTop!.isFaceUp, isTrue);
+      expect(game.undo(), isTrue);
+      expect(game.snapshot().encode(), before.encode());
+      expect(game.previewUndo(), isEmpty);
+    });
+
+    test('undoing a recycle restores the whole waste in original order', () {
+      final game = KlondikeGame.fromDeal(DealSpec(seed: 2));
+      while (game.stockTop != null) {
+        game.drawFromStock();
+      }
+      final before = game.snapshot();
+      game.drawFromStock();
+      final changes = game.previewUndo();
+      expect(changes.map((c) => c.card.id), before.waste.map((c) => c.id));
+      for (var i = 0; i < changes.length; i++) {
+        final change = changes[i];
+        expect(change.from.pile, WandPileType.stock);
+        expect(change.from.depth, changes.length - 1 - i);
+        expect(change.to.pile, WandPileType.waste);
+        expect(change.to.depth, i);
+        expect(change.card.isFaceUp, isFalse);
+        expect(change.faceUpAfterUndo, isTrue);
+      }
+      expect(game.undo(), isTrue);
+      expect(game.snapshot().encode(), before.encode());
+    });
+
+    test('a moving run and the card it uncovered are separate changes', () {
+      final wire = position(
+        columns: [
+          [diamonds(2), hearts(5), clubs(4)],
+          [spades(6)],
+        ],
+        hidden: {diamonds(2)},
+      );
+      final game = KlondikeGame.fromSnapshot(BoardSnapshot.fromJson(wire));
+      expect(game.moveStackToTableau(game.tableau.first.sublist(1), 1), isTrue);
+      final changes = game.previewUndo();
+      expect(changes.map((c) => c.card.id), [diamonds(2), hearts(5), clubs(4)]);
+      final flip = changes.first;
+      expect(flip.changesPile, isFalse);
+      expect(flip.card.isFaceUp, isTrue);
+      expect(flip.faceUpAfterUndo, isFalse);
+      for (final move in changes.skip(1)) {
+        expect(move.from.index, 1);
+        expect(move.to.index, 0);
+        expect(move.changesPile, isTrue);
+        expect(move.faceUpAfterUndo, isTrue);
+      }
+      expect(game.undo(), isTrue);
+      expect(game.snapshot().toJson(), wire);
+    });
+
+    test(
+      'Wand extraction returns only the extracted card to its buried depth',
+      () {
+        final wire = position(
+          columns: [
+            [spades(8), hearts(1), diamonds(5)],
+          ],
+          hidden: {spades(8), hearts(1)},
+        );
+        final game = KlondikeGame.fromSnapshot(BoardSnapshot.fromJson(wire));
+        expect(game.executeMagicWand(game.planMagicWand()!), isTrue);
+        final change = game.previewUndo().single;
+        expect(change.card.id, hearts(1));
+        expect(change.from.pile, WandPileType.foundation);
+        expect(change.to.pile, WandPileType.tableau);
+        expect(change.to.depth, 1);
+        expect(change.faceUpAfterUndo, isFalse);
+        expect(game.undo(), isTrue);
+        expect(game.snapshot().toJson(), wire);
+      },
+    );
+  });
+
   test('5 spades cannot land on 6 clubs via drag, tap, hint or Wand', () {
     final game = KlondikeGame.fromSnapshot(
       BoardSnapshot.fromJson(
