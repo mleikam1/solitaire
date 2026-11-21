@@ -8,6 +8,7 @@ import 'package:solitaire/game/deal_spec.dart';
 import 'package:solitaire/game/klondike_game.dart';
 import 'package:solitaire/models/card_model.dart';
 import 'package:solitaire/pages/solitaire_game_page.dart';
+import 'package:solitaire/widgets/card_flight.dart';
 import 'package:solitaire/widgets/card_widget.dart';
 
 /// Build a legal descending run over a concealed ace, keeping all 52 cards.
@@ -150,7 +151,23 @@ void main() {
       }
       await drag.moveTo(tester.getCenter(cardWidgets(seven.id)));
       await tester.pump();
+      final released = tester.getTopLeft(cardWidgets(six.id).last);
       await drag.up();
+      await tester.pump();
+      final flight = find.byType(CardFlight);
+      final flyingSix = find.descendant(
+        of: flight,
+        matching: cardWidgets(six.id),
+      );
+      final flyingFive = find.descendant(
+        of: flight,
+        matching: cardWidgets(five.id),
+      );
+      expect((tester.getTopLeft(flyingSix) - released).distance, lessThan(1));
+      expect(
+        (tester.getTopLeft(flyingFive) - tester.getTopLeft(flyingSix)).dy,
+        closeTo(fiveRect.top - sixRect.top, 1),
+      );
       await tester.pumpAndSettle();
       expect(game.moves, before + 1);
       expect(game.tableau[1].map((c) => c.id), [seven.id, six.id, five.id]);
@@ -187,7 +204,7 @@ void main() {
       final diamonds = game.tableau[3].last;
       final original = game.snapshot().encode();
 
-      Future<void> dropOn(PlayingCard target) async {
+      Future<void> dropOn(PlayingCard target, {bool cancel = false}) async {
         // Grab at the left edge and release at the right. The pointer still
         // targets this pile even if the feedback card overlaps its neighbor.
         final from =
@@ -201,18 +218,218 @@ void main() {
         await tester.pump();
         await drag.moveTo(to);
         await tester.pump();
-        await drag.up();
-        await tester.pumpAndSettle();
+        if (cancel) {
+          await drag.cancel();
+        } else {
+          await drag.up();
+        }
+        await tester.pump();
       }
 
       await dropOn(clubs);
+      expect(find.byType(CardFlight), findsNothing);
       expect(game.snapshot().encode(), original);
       expect(game.canUndo, isFalse);
 
+      await dropOn(diamonds, cancel: true);
+      expect(find.byType(CardFlight), findsNothing);
+      expect(game.snapshot().encode(), original);
+
       await dropOn(diamonds);
+      expect(find.byType(CardFlight), findsOneWidget);
+      await tester.pumpAndSettle();
       expect(game.tableau[3].last, same(five));
       expect(game.moves, 1);
       expect(game.canUndo, isTrue);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'tapping a run flies both cards to the tableau, then the exposed ace flies to its foundation',
+    (tester) async {
+      final game = await openBoard(tester);
+      final ace = game.tableau[0].first;
+      final six = game.tableau[0][1];
+      final five = game.tableau[0].last;
+      final source = tester.getRect(cardWidgets(six.id));
+      // The five covers the lower part of the six.
+      await tester.tapAt(source.topLeft + const Offset(7, 7));
+      await tester.pump();
+      final flight = find.byType(CardFlight);
+      final flyingSix = find.descendant(
+        of: flight,
+        matching: cardWidgets(six.id),
+      );
+      final flyingFive = find.descendant(
+        of: flight,
+        matching: cardWidgets(five.id),
+      );
+      expect(tester.getRect(flyingSix), rectMoreOrLessEquals(source));
+      expect(cardWidgets(six.id), findsOneWidget);
+      expect(cardWidgets(five.id), findsOneWidget);
+      expect(assetOf(tester, flyingFive), DeckStyle.koiKingdom.faceAsset(five));
+      expect(game.tableau[1].last, same(five));
+      await tester.pump(CardFlight.moveDuration * 0.45);
+      final midair = tester.getCenter(flyingSix);
+      expect((midair - source.center).distance, greaterThan(5));
+      await tester.pump(CardFlight.moveDuration * 0.43);
+      final landing = tester.getRect(flyingSix);
+      await tester.pumpAndSettle();
+      final destination = tester.getRect(cardWidgets(six.id));
+      expect((midair - destination.center).distance, greaterThan(1));
+      expect(
+        (landing.center - destination.center).distance,
+        lessThan(source.height / 5),
+      );
+      // The landing has its own scale accent before the card lies flat.
+      expect(
+        (landing.width - destination.width).abs() +
+            (landing.height - destination.height).abs(),
+        greaterThan(0.1),
+      );
+
+      final aceSource = tester.getCenter(cardWidgets(ace.id));
+      await tester.tap(cardWidgets(ace.id));
+      await tester.pump();
+      final flyingAce = find.descendant(
+        of: flight,
+        matching: cardWidgets(ace.id),
+      );
+      expect(tester.getCenter(flyingAce), offsetMoreOrLessEquals(aceSource));
+      await tester.pump(CardFlight.moveDuration * 0.4);
+      expect(tester.getCenter(flyingAce).dy, lessThan(aceSource.dy));
+      await tester.pumpAndSettle();
+      expect(flight, findsNothing);
+      expect(game.foundationTop(0), same(ace));
+      expect(cardWidgets(ace.id), findsOneWidget);
+      expect(game.moves, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'a stock draw lifts the chosen deck back, turns edge-on, and lands face up on the waste',
+    (tester) async {
+      final game = await openBoard(tester);
+      final drawn = game.stockTop!;
+      final source = tester.getRect(cardWidgets(drawn.id));
+      await tester.tapAt(source.center);
+      await tester.pump();
+      final flight = find.byType(CardFlight);
+      final flyingCard = find.descendant(
+        of: flight,
+        matching: cardWidgets(drawn.id),
+      );
+      expect(tester.getRect(flyingCard), rectMoreOrLessEquals(source));
+      expect(cardWidgets(drawn.id), findsOneWidget);
+      expect(assetOf(tester, flyingCard), DeckStyle.koiKingdom.backAsset);
+      expect(game.wasteTop, same(drawn));
+      expect(game.moves, 1);
+      await tester.pump(CardFlight.drawDuration * 0.35);
+      final turning = tester.getRect(flyingCard);
+      expect(turning.width.abs(), lessThan(source.width * 0.65));
+      expect(turning.center.dx, greaterThan(source.center.dx));
+      await tester.pump(CardFlight.drawDuration * 0.30);
+      expect(
+        assetOf(tester, flyingCard),
+        DeckStyle.koiKingdom.faceAsset(drawn),
+      );
+      await tester.pumpAndSettle();
+      expect(flight, findsNothing);
+      expect(cardWidgets(drawn.id), findsOneWidget);
+      expect(
+        tester.getCenter(cardWidgets(drawn.id)).dx,
+        greaterThan(turning.center.dx),
+      );
+      expect(game.moves, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'a second draw replaces the flight, undo and New Deal clear it without a delayed move',
+    (tester) async {
+      final game = await openBoard(tester);
+      final stock = tester.getCenter(cardWidgets(game.stockTop!.id));
+      final flight = find.byType(CardFlight);
+      await tester.tapAt(stock);
+      await tester.pump();
+      await tester.pump(CardFlight.drawDuration * 0.25);
+      final firstDraw = game.snapshot().encode();
+      final first = game.wasteTop!;
+      final second = game.stockTop!;
+      await tester.tapAt(stock);
+      await tester.pump();
+      expect(game.moves, 2);
+      expect(flight, findsOneWidget);
+      expect(
+        find.descendant(of: flight, matching: cardWidgets(second.id)),
+        findsOneWidget,
+      );
+      expect(
+        assetOf(tester, cardWidgets(first.id)),
+        DeckStyle.koiKingdom.faceAsset(first),
+      );
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), firstDraw);
+      expect(flight, findsNothing);
+
+      await tester.tapAt(stock);
+      await tester.pump();
+      expect(flight, findsOneWidget);
+      await tester.tap(find.byTooltip('New Deal'));
+      await tester.pump();
+      expect(flight, findsNothing);
+      final newDeal = game.snapshot().encode();
+      await tester.pump(CardFlight.drawDuration * 2);
+      expect(game.snapshot().encode(), newDeal);
+      expect(game.moves, 0);
+      expect(game.canUndo, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'reduced motion deals and moves cards immediately, and empty stock still recycles the waste',
+    (tester) async {
+      final dispatcher = tester.binding.platformDispatcher;
+      dispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+      final game = await openBoard(tester);
+      final five = game.tableau[4].last;
+      await tester.tap(cardWidgets(five.id));
+      await tester.pump();
+      expect(find.byType(CardFlight), findsNothing);
+      expect(game.tableau[3].last, same(five));
+      final drawn = game.stockTop!;
+      final stock = tester.getCenter(cardWidgets(drawn.id));
+      await tester.tapAt(stock);
+      await tester.pump();
+      expect(find.byType(CardFlight), findsNothing);
+      expect(
+        assetOf(tester, cardWidgets(drawn.id)),
+        DeckStyle.koiKingdom.faceAsset(drawn),
+      );
+
+      dispatcher.clearAccessibilityFeaturesTestValue();
+      while (game.stockTop != null) {
+        game.drawFromStock();
+      }
+      await tester.pump();
+      final moves = game.moves;
+      await tester.tapAt(stock);
+      await tester.pump();
+      expect(find.byType(CardFlight), findsNothing);
+      expect(game.stockTop, same(drawn));
+      expect(game.wasteTop, isNull);
+      expect(game.moves, moves + 1);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,

@@ -242,7 +242,9 @@ void main() {
     await _tapCard(tester, game.stockTop!);
     final almostDone = page.captureHelp();
     expect(page.completedDeal, isNull);
-    await _tapCard(tester, game.wasteTop!);
+    // The waste accepts the next tap even while the drawn king is in flight.
+    await tester.tap(find.byKey(ValueKey<int>(game.wasteTop!.id)));
+    await tester.pump();
     final result = page.completedDeal!;
     expect(result.deal.seed, 2875);
     expect(result.moves, almostDone.board.moves + 1);
