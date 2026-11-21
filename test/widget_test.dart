@@ -44,12 +44,32 @@ void main() {
             tester.getTopLeft(find.byElementPredicate((e) => e == element)),
           ),
       ];
+      void expectBoardArtwork(DeckStyle deck) {
+        for (final element in cards.evaluate()) {
+          final card = (element.widget as CardWidget).card;
+          final image = tester.widget<Image>(
+            find.descendant(
+              of: find.byElementPredicate((e) => e == element),
+              matching: find.byType(Image),
+            ),
+          );
+          final provider =
+              (image.image as ResizeImage).imageProvider as AssetImage;
+          final expected =
+              card.isFaceUp ? deck.faceAsset(card) : deck.backAsset;
+          expect(provider.assetName, expected);
+        }
+      }
+
       final score = find.textContaining('Score: ');
       final time = find.textContaining('Time: ');
 
-      expect(appearance.deck, DeckStyle.originalClassic);
+      expect(appearance.deck, DeckStyle.starlineArcade);
       expect(appearance.table, TableStyle.originalGreen);
-      expect(find.byIcon(Icons.star), findsNWidgets(22));
+      final dealt = tester.widgetList<CardWidget>(cards);
+      expect(dealt.where((w) => w.card.isFaceUp), hasLength(7));
+      expect(dealt.where((w) => !w.card.isFaceUp), hasLength(22));
+      expectBoardArtwork(DeckStyle.starlineArcade);
       expect(find.text('Time: 00:00'), findsOneWidget);
       expect(find.text('Moves: 0'), findsOneWidget);
       // Spend one of each power-up to make resets detectable.
@@ -97,22 +117,7 @@ void main() {
         tester.widget<TableSurface>(find.byType(TableSurface)).table,
         TableStyle.silverballArcade,
       );
-      for (final element in cards.evaluate()) {
-        final card = (element.widget as CardWidget).card;
-        final image = tester.widget<Image>(
-          find.descendant(
-            of: find.byElementPredicate((e) => e == element),
-            matching: find.byType(Image),
-          ),
-        );
-        final provider =
-            (image.image as ResizeImage).imageProvider as AssetImage;
-        final expected =
-            card.isFaceUp
-                ? appearance.deck.faceAsset(card)
-                : appearance.deck.backAsset;
-        expect(provider.assetName, expected);
-      }
+      expectBoardArtwork(DeckStyle.koiKingdom);
 
       await tester.tap(find.byTooltip('Undo'));
       await tester.pumpAndSettle();

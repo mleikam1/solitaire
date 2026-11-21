@@ -11,7 +11,7 @@ void main() {
     'every illustrated face, back and table loads from the Flutter bundle',
     () async {
       final paths = <String>{};
-      expect(DeckStyle.values, hasLength(6));
+      expect(DeckStyle.values, hasLength(7));
       expect(TableStyle.values, hasLength(11));
       for (final deck in DeckStyle.values) {
         for (final suit in Suit.values) {
@@ -30,7 +30,7 @@ void main() {
       for (final table in TableStyle.values) {
         if (table.asset != null) paths.add(table.asset!);
       }
-      expect(paths, hasLength(275));
+      expect(paths, hasLength(328));
       final bundle = await AssetManifest.loadFromAssetBundle(rootBundle);
       final installed = bundle.listAssets().where(
         (path) =>
@@ -53,20 +53,32 @@ void main() {
   test('first launch, independent selection, reload and reset', () async {
     SharedPreferences.setMockInitialValues({});
     var appearance = await AppearanceController.load();
-    expect(appearance.deck, DeckStyle.originalClassic);
+    expect(appearance.deck, DeckStyle.starlineArcade);
     expect(appearance.table, TableStyle.originalGreen);
 
     await appearance.setTable(TableStyle.silverballArcade);
-    expect(appearance.deck, DeckStyle.originalClassic);
+    expect(appearance.deck, DeckStyle.starlineArcade);
     await appearance.setDeck(DeckStyle.koiKingdom);
     appearance = await AppearanceController.load();
     expect(appearance.deck, DeckStyle.koiKingdom);
     expect(appearance.table, TableStyle.silverballArcade);
     await appearance.restoreDefaults();
     appearance = await AppearanceController.load();
-    expect(appearance.deck, DeckStyle.originalClassic);
+    expect(appearance.deck, DeckStyle.starlineArcade);
     expect(appearance.table, TableStyle.originalGreen);
   });
+
+  test(
+    'previously saved Original Classic survives the default change',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'appearance.deckAndTable': ['original_classic', 'koi_garden'],
+      });
+      final appearance = await AppearanceController.load();
+      expect(appearance.deck, DeckStyle.originalClassic);
+      expect(appearance.table, TableStyle.koiGarden);
+    },
+  );
 
   test('unknown IDs recover independently', () async {
     Future<AppearanceController> open(List<String> ids) {
@@ -75,7 +87,7 @@ void main() {
     }
 
     final oldDeck = await open(['retired', 'silverball_arcade']);
-    expect(oldDeck.deck, DeckStyle.originalClassic);
+    expect(oldDeck.deck, DeckStyle.starlineArcade);
     expect(oldDeck.table, TableStyle.silverballArcade);
     final oldTable = await open(['koi_kingdom', 'retired']);
     expect(oldTable.deck, DeckStyle.koiKingdom);

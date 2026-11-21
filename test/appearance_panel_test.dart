@@ -113,7 +113,7 @@ void main() {
     tester,
   ) async {
     final appearance = await openPanel(tester, const Size(320, 568));
-    expectSample(tester, DeckStyle.originalClassic, TableStyle.originalGreen);
+    expectSample(tester, DeckStyle.starlineArcade, TableStyle.originalGreen);
     await tester.tap(find.text('Table'));
     await tester.pumpAndSettle();
     await choose(tester, 'table-${TableStyle.silverballArcade.id}');
@@ -159,7 +159,7 @@ void main() {
 
     await tester.tap(find.text('Restore Defaults'));
     await tester.pumpAndSettle();
-    expectSample(tester, DeckStyle.originalClassic, TableStyle.originalGreen);
+    expectSample(tester, DeckStyle.starlineArcade, TableStyle.originalGreen);
     await tester.tap(find.byTooltip('Close Appearance'));
     await tester.pumpAndSettle();
     expect(find.text('Appearance'), findsNothing);
