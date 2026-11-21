@@ -87,7 +87,7 @@ void main() {
       final previousScore = tester.widget<Text>(score).data;
 
       await tester.tap(cards.first); // Stock.
-      await tester.pump();
+      await tester.pumpAndSettle(); // Compare the settled card positions.
       expect(find.text('Moves: 2'), findsOneWidget);
       final afterDraw = snapshot();
 

@@ -8,36 +8,80 @@ import '../appearance/appearance_panel.dart';
 import '../appearance/table_surface.dart';
 import '../models/card_model.dart';
 import '../widgets/ad_banner.dart';
+import '../game/beat_challenge.dart';
+import '../game/deal_spec.dart';
+import '../game/help_snapshot.dart';
 import '../game/klondike_game.dart';
 import '../widgets/card_widget.dart';
+import '../widgets/card_flight.dart';
 import '../widgets/bottom_toolbar.dart';
 
 class SolitaireGamePage extends StatefulWidget {
-  const SolitaireGamePage({super.key, this.createGame = KlondikeGame.new});
+  const SolitaireGamePage({super.key, this.createGame = KlondikeGame.new})
+    : _help = null;
+
+  SolitaireGamePage.fromDeal(DealSpec deal, {super.key})
+    : _help = null,
+      createGame = (() => KlondikeGame.fromDeal(deal));
+
+  SolitaireGamePage.fromHelp(HelpSnapshot help, {super.key})
+    : _help = help,
+      createGame = (() => KlondikeGame.fromSnapshot(help.board));
 
   final KlondikeGame Function() createGame;
+  final HelpSnapshot? _help;
 
   @override
-  State<SolitaireGamePage> createState() => _SolitaireGamePageState();
+  SolitaireGamePageState createState() => SolitaireGamePageState();
 }
 
-class _SolitaireGamePageState extends State<SolitaireGamePage>
+/// A share action can sample the board and local clock synchronously using a
+/// `GlobalKey<SolitaireGamePageState>`. Open each incoming share on a new route.
+class SolitaireGamePageState extends State<SolitaireGamePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final KlondikeGame game = widget.createGame();
   late final AnimationController _wandFlight;
+  late final AnimationController _travel;
+  final _flightLayerKey = GlobalKey();
+  _CardTransfer? _transfer;
+  bool _reduceMotion = false;
+  Size? _viewSize;
 
-  late final Stopwatch _watch;
+  final Stopwatch _watch = WidgetsBinding.instance.samplingClock.stopwatch();
+  final Stopwatch _freezeWatch = WidgetsBinding.instance.samplingClock
+      .stopwatch();
   Timer? _timer;
-
-  bool _hasStarted = false;
-  bool _isPaused = false;
-  bool _isFreezeActive = false;
-  int _freezeCountdown = 0;
   Timer? _freezeTimer;
+
+  int _elapsedBase = 0;
+  int _freezeBudget = 0;
+  bool _hasStarted = false;
+  bool _foreground = true;
+
+  int get _elapsedMs => _elapsedBase + _watch.elapsedMilliseconds;
+  bool get _isFreezeActive => _freezeBudget > 0;
+  int get _remainingFreezeMs =>
+      math.max(0, _freezeBudget - _freezeWatch.elapsedMilliseconds);
+  int get _freezeCountdown => math.max(0, (_remainingFreezeMs - 1) ~/ 1000);
+
+  HelpSnapshot captureHelp() => HelpSnapshot(
+    board: game.snapshot(),
+    hasStarted: _hasStarted,
+    elapsedMilliseconds: _elapsedMs,
+    freezeRemainingMilliseconds: _remainingFreezeMs,
+  );
+
+  /// Only a fresh-start victory is eligible for a competition share. This is
+  /// a client result. A ranked service must independently verify the attempt.
+  CompletedDeal? get completedDeal => !game.startedFromSnapshot && game.isWon
+      ? (deal: game.deal, moves: game.moves, elapsedMilliseconds: _elapsedMs)
+      : null;
+
   Timer? _hintTimer;
   HintSuggestion? _activeHint;
   Set<PlayingCard> _hintCards = <PlayingCard>{};
   Set<PlayingCard> _draggingCards = <PlayingCard>{};
+  final Map<PlayingCard, Offset> _dragPointers = {};
   final List<GlobalKey> _tableauKeys = List.generate(7, (_) => GlobalKey());
   final List<GlobalKey> _foundationKeys = List.generate(4, (_) => GlobalKey());
   final GlobalKey _foundationRowKey = GlobalKey();
@@ -45,70 +89,98 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   final GlobalKey _wasteKey = GlobalKey();
 
   bool _isWandAnimating = false;
+  int _boardRevision = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _watch = Stopwatch();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    final help = widget._help;
+    if (help != null) {
+      _elapsedBase = help.elapsedMilliseconds;
+      _hasStarted = help.hasStarted;
+      _setFreeze(help.freezeRemainingMilliseconds);
+      _syncClock();
+    }
     _wandFlight = AnimationController(
       duration: const Duration(milliseconds: 350),
       vsync: this,
     );
+    _travel = AnimationController(vsync: this)..addStatusListener((status) {
+      if (status == AnimationStatus.completed && _transfer != null) {
+        setState(() => _transfer = null);
+      }
+    });
     game.addListener(_onGameChanged);
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final size = MediaQuery.sizeOf(context);
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion || size != _viewSize) _clearFlight();
+    _viewSize = size;
+  }
+
+  void _clearFlight() {
+    _travel.stop();
+    _transfer = null;
+  }
+
   void _onGameChanged() {
+    _clearFlight();
+    _boardRevision++;
+    _syncClock();
     _hintTimer?.cancel();
     _hintTimer = null;
     setState(() {
       _activeHint = null;
       _hintCards = <PlayingCard>{};
       _draggingCards = <PlayingCard>{};
+      _dragPointers.clear();
     });
   }
 
   // ===== Timer behavior (start on first move, pause/resume, reset on new deal) =====
   void _startTimerIfNeeded() {
-    if (!_hasStarted && !_watch.isRunning) {
-      _hasStarted = true;
-      _watch.start();
-      _timer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => setState(() {}),
-      );
-    }
+    if (_hasStarted) return;
+    _hasStarted = true;
+    _syncClock();
   }
 
-  void _pauseTimer() {
-    if (_watch.isRunning) {
-      _isPaused = true;
+  void _syncClock() {
+    final running =
+        _foreground && _hasStarted && !_isFreezeActive && !game.isWon;
+    if (running) {
+      _watch.start();
+    } else {
       _watch.stop();
-      _timer?.cancel();
     }
-  }
-
-  void _resumeTimer() {
-    if (_isPaused && !_isFreezeActive) {
-      _isPaused = false;
-      _watch.start();
-      _timer = Timer.periodic(
+    if (_foreground && (running || _isFreezeActive)) {
+      _timer ??= Timer.periodic(
         const Duration(seconds: 1),
         (_) => setState(() {}),
       );
+    } else {
+      _timer?.cancel();
+      _timer = null;
     }
   }
 
   void _resetTimer() {
     _hasStarted = false;
+    _elapsedBase = 0;
+    _setFreeze(0);
     _watch.stop();
     _watch.reset();
-    _timer?.cancel();
-    setState(() {});
+    _syncClock();
   }
 
   String _formatTime() {
-    final e = _watch.elapsed;
+    final e = Duration(milliseconds: _elapsedMs);
     final m = e.inMinutes.toString().padLeft(2, '0');
     final s = (e.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
@@ -118,28 +190,30 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   void _activateFreeze() {
     if (_isFreezeActive || game.freezeCount <= 0) return;
     setState(() {
-      _isFreezeActive = true;
-      _freezeCountdown = 10;
+      _setFreeze(HelpSnapshot.fullFreezeMilliseconds);
+      _syncClock();
       game.freezeCount--;
       _activeHint = null;
       _hintCards = <PlayingCard>{};
     });
     _hintTimer?.cancel();
     _hintTimer = null;
-    _pauseTimer();
+  }
 
+  // Store the full remaining interval, including the fractional first tick.
+  // Sampling a help link neither pauses nor consumes the owner's Freeze.
+  void _setFreeze(int milliseconds) {
     _freezeTimer?.cancel();
-    _freezeTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_freezeCountdown > 0) {
-        setState(() => _freezeCountdown--);
-      } else {
-        t.cancel();
-        setState(() {
-          _isFreezeActive = false;
-          _freezeCountdown = 0;
-        });
-        _resumeTimer();
-      }
+    _freezeWatch.stop();
+    _freezeWatch.reset();
+    _freezeBudget = milliseconds;
+    if (milliseconds == 0) return;
+    _freezeWatch.start();
+    _freezeTimer = Timer(Duration(milliseconds: milliseconds), () {
+      _freezeBudget = 0;
+      _freezeWatch.stop();
+      _syncClock();
+      setState(() {});
     });
   }
 
@@ -175,6 +249,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   Future<void> _handleWandPressed(double cardWidth, double cardHeight) async {
     if (_isWandAnimating) return;
 
+    final plannedRevision = _boardRevision;
     final plan = game.planMagicWand();
     if (plan == null) {
       if (!mounted) return;
@@ -193,12 +268,13 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
     if (!mounted) return;
     setState(() {
+      _clearFlight();
       _isWandAnimating = true;
     });
 
     try {
       await _animateWandPlan(plan, cardWidth, cardHeight);
-      if (!mounted) return;
+      if (!mounted || plannedRevision != _boardRevision) return;
       final success = game.executeMagicWand(plan);
       if (!success) {
         ScaffoldMessenger.of(context)
@@ -217,13 +293,9 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached) {
-      _pauseTimer();
-    } else if (state == AppLifecycleState.resumed) {
-      _resumeTimer();
-    }
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground && _transfer != null) setState(_clearFlight);
+    _syncClock();
   }
 
   @override
@@ -232,6 +304,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     _timer?.cancel();
     _freezeTimer?.cancel();
     _hintTimer?.cancel();
+    _travel.dispose();
     _wandFlight.dispose();
     game.removeListener(_onGameChanged);
     game.dispose();
@@ -314,8 +387,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
           ),
         ),
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: _buildPlayArea(
             child: Column(
               children: [
                 // Stock + Waste + Foundations row
@@ -355,20 +427,18 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                       children: List.generate(7, (colIdx) {
                         final column = game.tableau[colIdx];
                         return DragTarget<List<PlayingCard>>(
-                          onWillAcceptWithDetails: (details) {
-                            final stack = details.data;
-                            if (stack.isEmpty) return false;
-                            final movingTop = stack.first;
-                            final destTop = column.isEmpty ? null : column.last;
-                            return game.canPlaceOnTableau(destTop, movingTop);
-                          },
+                          onWillAcceptWithDetails: (details) =>
+                              game.canMoveStackToTableau(details.data, colIdx),
                           onAcceptWithDetails: (details) {
                             _startTimerIfNeeded();
                             _clearDraggingCards();
                             final stack = List<PlayingCard>.from(details.data);
-                            final moved = game.moveStackToTableau(
-                              stack,
-                              colIdx,
+                            final moved = _moveWithFlight(
+                              stack.first,
+                              cardWidth,
+                              cardHeight,
+                              () => game.moveStackToTableau(stack, colIdx),
+                              release: details.offset,
                             );
                             if (!moved) {
                               setState(() {});
@@ -395,7 +465,13 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
                               child: Stack(
                                 clipBehavior: Clip.none,
                                 children: [
-                                  Positioned.fill(child: _buildEmptySlotBox()),
+                                  Positioned(
+                                    top: 0,
+                                    left: 0,
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _buildEmptySlotBox(),
+                                  ),
                                   for (int row = 0; row < column.length; row++)
                                     Positioned(
                                       key: ValueKey<int>(column[row].id),
@@ -479,6 +555,135 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     return offset;
   }
 
+  Widget _buildPlayArea({required Widget child}) {
+    final transfer = _transfer;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: NotificationListener<ScrollStartNotification>(
+        onNotification: (_) {
+          if (_transfer != null) setState(_clearFlight);
+          return false;
+        },
+        child: Stack(
+          key: _flightLayerKey,
+          clipBehavior: Clip.none,
+          fit: StackFit.expand,
+          children: [
+            Listener(
+              onPointerCancel: (_) => _clearDraggingCards(),
+              child: RepaintBoundary(child: child),
+            ),
+            if (transfer != null)
+              AnimatedBuilder(
+                animation: _travel,
+                builder:
+                    (_, _) => CardFlight(
+                      key: const ValueKey('card-flight'),
+                      progress: _travel.value,
+                      start: transfer.start,
+                      end: transfer.end,
+                      cards: transfer.cards,
+                      offsets: transfer.offsets,
+                      flip: transfer.flip,
+                      buildCard:
+                          (card, faceUp) => CardWidget(
+                            card: faceUp ? card : transfer.back!,
+                            width: transfer.start.width,
+                            height: transfer.start.height,
+                          ),
+                    ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  WandLocation? _locateCard(PlayingCard card) {
+    if (identical(game.stockTop, card)) {
+      return const WandLocation(pile: WandPileType.stock, index: 0, depth: 0);
+    }
+    if (identical(game.wasteTop, card)) {
+      return const WandLocation(pile: WandPileType.waste, index: 0, depth: 0);
+    }
+    for (var i = 0; i < _foundationKeys.length; i++) {
+      if (identical(game.foundationTop(i), card)) {
+        return WandLocation(pile: WandPileType.foundation, index: i, depth: 0);
+      }
+    }
+    for (var i = 0; i < game.tableau.length; i++) {
+      final depth = game.tableau[i].indexOf(card);
+      if (depth >= 0) {
+        return WandLocation(pile: WandPileType.tableau, index: i, depth: depth);
+      }
+    }
+    return null;
+  }
+
+  // Apply the normal engine command once. Use its actual destination and
+  // moved suffix so animation never needs its own copy of the game rules.
+  bool _moveWithFlight(
+    PlayingCard card,
+    double width,
+    double height,
+    VoidCallback apply, {
+    Offset? release,
+    bool flip = false,
+  }) {
+    final before = game.moves;
+    final layer =
+        _flightLayerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (_reduceMotion || !_foreground || layer == null || !layer.hasSize) {
+      apply();
+      return before != game.moves;
+    }
+
+    final source = _locateCard(card);
+    final origin =
+        release ??
+        (source == null ? null : _computeGlobalOffset(source, width));
+    final previousWaste = game.wasteTop;
+    final previousFoundations = List.generate(
+      _foundationKeys.length,
+      game.foundationTop,
+    );
+    apply();
+    if (game.moves == before) return false;
+    final destination = _locateCard(card);
+    if (origin == null || destination == null) return true;
+    final landing = _computeGlobalOffset(destination, width);
+    if (landing == null) return true;
+
+    final cards =
+        destination.pile == WandPileType.tableau
+            ? game.tableau[destination.index].sublist(destination.depth)
+            : [card];
+    final size = Size(width, height);
+    final transfer = _CardTransfer(
+      start: layer.globalToLocal(origin) & size,
+      end: layer.globalToLocal(landing) & size,
+      cards: cards,
+      offsets: List.generate(cards.length, (i) => _cardOffset(cards, i, width)),
+      covered: switch (destination.pile) {
+        WandPileType.waste => previousWaste,
+        WandPileType.foundation => previousFoundations[destination.index],
+        _ => null,
+      },
+      back: flip ? (card.clone()..isFaceUp = false) : null,
+    );
+    setState(() => _transfer = transfer);
+    _travel.duration = flip ? CardFlight.drawDuration : CardFlight.moveDuration;
+    _travel.forward(from: 0);
+    // Shortening the source column can clamp the tableau's scroll position
+    // during layout. Aim for the actual landing spot after that adjustment.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(_transfer, transfer)) return;
+      final offset = _computeGlobalOffset(destination, width);
+      if (offset != null) transfer.end = layer.globalToLocal(offset) & size;
+    });
+    return true;
+  }
+
   // ===== UI helpers =====
   Widget _buildStockSlot(double w, double h) {
     final card = game.stockTop;
@@ -498,7 +703,12 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
             behavior: HitTestBehavior.opaque,
             onTap: () {
               _startTimerIfNeeded();
-              game.drawFromStock();
+              final top = game.stockTop;
+              if (top == null) {
+                game.drawFromStock(); // Recycle the waste.
+              } else {
+                _moveWithFlight(top, w, h, game.drawFromStock, flip: true);
+              }
             },
             child: SizedBox.expand(child: content),
           ),
@@ -532,6 +742,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
           child: _buildDraggingGhost(card, w, h),
         ),
         onDragStarted: () => _handleDragStarted([card]),
+        onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
         onDragEnd: (details) {
           _handleDragEnd([card], details, w, h);
         },
@@ -540,7 +751,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
           behavior: HitTestBehavior.opaque,
           onTap: () {
             _startTimerIfNeeded();
-            game.tapCard(card);
+            _moveWithFlight(card, w, h, () => game.tapCard(card));
           },
           child: _buildHintableCard(card, w, h),
         ),
@@ -552,13 +763,20 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     return DragTarget<List<PlayingCard>>(
       onWillAcceptWithDetails: (details) {
         final stack = details.data;
-        if (stack.isEmpty || stack.length != 1) return false;
-        return game.canPlaceOnFoundation(index, stack.first);
+        return stack.length == 1 &&
+            game.canMoveCardToFoundation(stack.single, index);
       },
       onAcceptWithDetails: (details) {
         _startTimerIfNeeded();
         _clearDraggingCards();
-        game.moveCardToFoundation(details.data.first, index);
+        final card = details.data.first;
+        _moveWithFlight(
+          card,
+          w,
+          h,
+          () => game.moveCardToFoundation(card, index),
+          release: details.offset,
+        );
       },
       builder: (context, candidate, rejected) {
         final card = game.foundationTop(index);
@@ -600,6 +818,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         child: _buildDraggingGhost(card, w, h),
       ),
       onDragStarted: () => _handleDragStarted([card]),
+      onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
       onDragEnd: (details) {
         _handleDragEnd([card], details, w, h);
       },
@@ -608,7 +827,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         behavior: HitTestBehavior.opaque,
         onTap: () {
           _startTimerIfNeeded();
-          game.tapCard(card);
+          _moveWithFlight(card, w, h, () => game.tapCard(card));
         },
         child: _buildHintableCard(card, w, h),
       ),
@@ -658,6 +877,24 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   Widget _buildHintableCard(PlayingCard card, double w, double h) {
+    final transfer = _transfer;
+    if (transfer != null && transfer.cards.contains(card)) {
+      // Keep the destination's real tap/drag target live during travel.
+      final below = transfer.covered;
+      return Semantics(
+        image: true,
+        label: '${card.displayValue} of ${card.suit.name}',
+        excludeSemantics: true,
+        child: SizedBox(
+          width: w,
+          height: h,
+          child:
+              below == null
+                  ? (transfer.flip ? _buildEmptySlotBox() : null)
+                  : CardWidget(card: below, width: w, height: h),
+        ),
+      );
+    }
     final bool highlight = _hintCards.contains(card);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -724,11 +961,10 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
     double h,
   ) {
     final card = column[row];
-    if (!card.isFaceUp) {
+    final stack = column.sublist(row);
+    if (!game.isMovableRun(stack)) {
       return _buildHintableCard(card, w, h);
     }
-
-    final stack = column.sublist(row); // inclusive stack (run)
 
     return Draggable<List<PlayingCard>>(
       key: ValueKey<int>(card.id),
@@ -740,14 +976,16 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         child: _buildDraggingGhost(card, w, h),
       ),
       onDragStarted: () => _handleDragStarted(stack),
+      onDragUpdate: (details) => _dragPointers[card] = details.globalPosition,
       onDragEnd: (details) {
         _handleDragEnd(List<PlayingCard>.from(stack), details, w, h);
       },
       dragAnchorStrategy: childDragAnchorStrategy,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () {
           _startTimerIfNeeded();
-          game.tapCard(card);
+          _moveWithFlight(card, w, h, () => game.tapCard(card));
         },
         child:
             _draggingCards.contains(card)
@@ -760,6 +998,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   void _handleDragStarted(List<PlayingCard> stack) {
     _startTimerIfNeeded();
     setState(() {
+      _clearFlight();
       _draggingCards = stack.toSet();
     });
   }
@@ -784,14 +1023,25 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       return;
     }
 
-    bool didUpdate = _clearDraggingCards();
+    final active = _draggingCards.contains(stack.first);
+    final pointer = _dragPointers.remove(stack.first);
+    final didUpdate = _clearDraggingCards();
 
-    if (details.wasAccepted) {
+    // Flutter reports cancellation and an unaccepted release the same way.
+    // Only a real release from the active drag may trigger near-miss snapping.
+    if (details.wasAccepted || !active) {
       return;
     }
 
-    final dropPoint = details.offset + Offset(cardWidth / 2, cardHeight / 2);
-    final moved = _autoSnapStack(stack, dropPoint, cardWidth, cardHeight);
+    final dropPoint =
+        pointer ?? details.offset + Offset(cardWidth / 2, cardHeight / 2);
+    final moved = _autoSnapStack(
+      stack,
+      dropPoint,
+      details.offset,
+      cardWidth,
+      cardHeight,
+    );
     if (!moved && !didUpdate) {
       setState(() {});
     }
@@ -800,11 +1050,11 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
   bool _autoSnapStack(
     List<PlayingCard> stack,
     Offset dropPoint,
+    Offset release,
     double cardWidth,
     double cardHeight,
   ) {
     if (stack.isEmpty) return false;
-    final topCard = stack.first;
     final tolerance = math.max(24.0, cardWidth * 0.35);
     final maxDistance = math.max(cardWidth, cardHeight) * 0.75;
 
@@ -814,11 +1064,10 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       final rect = _getGlobalRect(_tableauKeys[i]);
       if (rect == null) continue;
       final expanded = rect.inflate(tolerance);
-      final column = game.tableau[i];
-      if (!game.canPlaceOnTableau(
-        column.isEmpty ? null : column.last,
-        topCard,
-      )) {
+      if (!game.canMoveStackToTableau(stack, i)) {
+        // An explicit drop on an illegal pile should return to the source
+        // even if an adjacent legal pile is within the near-miss tolerance.
+        if (rect.contains(dropPoint)) return false;
         continue;
       }
       final distance = _distanceToRect(expanded, dropPoint);
@@ -828,19 +1077,18 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       }
     }
 
-    if (stack.length == 1) {
-      for (int i = 0; i < _foundationKeys.length; i++) {
-        if (!game.canPlaceOnFoundation(i, topCard)) {
-          continue;
-        }
-        final rect = _getGlobalRect(_foundationKeys[i]);
-        if (rect == null) continue;
-        final expanded = rect.inflate(tolerance);
-        final distance = _distanceToRect(expanded, dropPoint);
-        if (distance <= maxDistance &&
-            (bestTarget == null || distance < bestTarget.distance)) {
-          bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, distance);
-        }
+    for (int i = 0; i < _foundationKeys.length; i++) {
+      final rect = _getGlobalRect(_foundationKeys[i]);
+      if (rect == null) continue;
+      if (stack.length != 1 || !game.canMoveCardToFoundation(stack.single, i)) {
+        if (rect.contains(dropPoint)) return false;
+        continue;
+      }
+      final expanded = rect.inflate(tolerance);
+      final distance = _distanceToRect(expanded, dropPoint);
+      if (distance <= maxDistance &&
+          (bestTarget == null || distance < bestTarget.distance)) {
+        bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, distance);
       }
     }
 
@@ -850,7 +1098,7 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
         final expandedRow = rowRect.inflate(tolerance);
         if (expandedRow.contains(dropPoint)) {
           for (int i = 0; i < _foundationKeys.length; i++) {
-            if (game.canPlaceOnFoundation(i, topCard)) {
+            if (game.canMoveCardToFoundation(stack.single, i)) {
               bestTarget = _AutoDropTarget(_AutoDropType.foundation, i, 0);
               break;
             }
@@ -863,23 +1111,20 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
       return false;
     }
 
-    switch (bestTarget.type) {
-      case _AutoDropType.tableau:
-        final moved = game.moveStackToTableau(
-          List<PlayingCard>.from(stack),
-          bestTarget.index,
-        );
-        if (moved) {
-          _startTimerIfNeeded();
-        }
-        return moved;
-      case _AutoDropType.foundation:
-        final moved = game.moveCardToFoundation(stack.first, bestTarget.index);
-        if (moved) {
-          _startTimerIfNeeded();
-        }
-        return moved;
-    }
+    final target = bestTarget;
+    return _moveWithFlight(
+      stack.first,
+      cardWidth,
+      cardHeight,
+      () => switch (target.type) {
+        _AutoDropType.tableau => game.moveStackToTableau(stack, target.index),
+        _AutoDropType.foundation => game.moveCardToFoundation(
+          stack.first,
+          target.index,
+        ),
+      },
+      release: release,
+    );
   }
 
   Future<void> _animateWandPlan(
@@ -992,6 +1237,25 @@ class _SolitaireGamePageState extends State<SolitaireGamePage>
             : (point.dy > rect.bottom ? point.dy - rect.bottom : 0.0);
     return math.sqrt(dx * dx + dy * dy);
   }
+}
+
+class _CardTransfer {
+  _CardTransfer({
+    required this.start,
+    required this.end,
+    required this.cards,
+    required this.offsets,
+    required this.covered,
+    required this.back,
+  });
+
+  final Rect start;
+  Rect end;
+  final List<PlayingCard> cards;
+  final List<double> offsets;
+  final PlayingCard? covered;
+  final PlayingCard? back;
+  bool get flip => back != null;
 }
 
 class _AutoDropTarget {

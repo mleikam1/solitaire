@@ -1,6 +1,7 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/card_model.dart';
+import 'board_snapshot.dart';
+import 'deal_spec.dart';
 
 /// Klondike Solitaire core state + rules.
 /// Public helpers are exposed for the UI (drag/drop validation & execution).
@@ -12,6 +13,23 @@ class KlondikeGame extends ChangeNotifier {
   List.generate(4, (_) => <PlayingCard>[]);
   final List<List<PlayingCard>> _tableau =
   List.generate(7, (_) => <PlayingCard>[]);
+
+  late DealSpec _deal;
+  DealSpec get deal => _deal;
+
+  bool _startedFromSnapshot = false;
+
+  /// A helper's finish belongs to the imported position. The origin survives
+  /// undo until the player starts a new deal or imports another position.
+  bool get startedFromSnapshot => _startedFromSnapshot;
+
+  Object _position = Object();
+
+  @override
+  void notifyListeners() {
+    _position = Object();
+    super.notifyListeners();
+  }
 
   // Stats
   int _score = 0;
@@ -30,6 +48,7 @@ class KlondikeGame extends ChangeNotifier {
   int get moves => _moves;
   List<List<PlayingCard>> get tableau => _tableau;
   bool get canUndo => _history.isNotEmpty;
+  bool get isWon => _foundations.every((pile) => pile.length == 13);
 
   PlayingCard? get stockTop => _stock.isEmpty ? null : _stock.last;
   PlayingCard? get wasteTop => _waste.isEmpty ? null : _waste.last;
@@ -43,8 +62,29 @@ class KlondikeGame extends ChangeNotifier {
     newDeal();
   }
 
+  KlondikeGame.fromDeal(DealSpec deal) {
+    startDeal(deal);
+  }
+
+  KlondikeGame.fromSnapshot(BoardSnapshot board) {
+    restoreBoard(board);
+  }
+
   // ===== New Deal =====
   void newDeal() {
+    // Ordinary play carries remaining power-ups into the next deal.
+    startDeal(DealSpec.random(
+      initialFreezeCount: freezeCount,
+      initialWandCount: wandCount,
+    ));
+  }
+
+  void startDeal(DealSpec deal) {
+    final deck = deal.shuffledDeck();
+    _deal = deal;
+    _startedFromSnapshot = false;
+    freezeCount = deal.initialFreezeCount;
+    wandCount = deal.initialWandCount;
     _history.clear();
     _stock.clear();
     _waste.clear();
@@ -54,10 +94,6 @@ class KlondikeGame extends ChangeNotifier {
     for (final t in _tableau) {
       t.clear();
     }
-
-    PlayingCard.resetIdCounter();
-
-    final deck = _buildDeck()..shuffle(Random());
 
     // tableau: col i gets i+1, top is face up
     for (int col = 0; col < 7; col++) {
@@ -80,14 +116,39 @@ class KlondikeGame extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<PlayingCard> _buildDeck() {
-    final deck = <PlayingCard>[];
-    for (final s in Suit.values) {
-      for (int r = 1; r <= 13; r++) {
-        deck.add(PlayingCard(rank: r, suit: s));
-      }
-    }
-    return deck;
+  /// Capture the current position by value. The page owns the play clock.
+  BoardSnapshot snapshot() => BoardSnapshot.capture(
+    deal: _deal,
+    stock: _stock,
+    waste: _waste,
+    foundations: _foundations,
+    tableau: _tableau,
+    score: _score,
+    moves: _moves,
+    freezeCount: freezeCount,
+    wandCount: wandCount,
+  );
+
+  /// Install a validated position, with this position as the undo boundary.
+  void restoreBoard(BoardSnapshot board) {
+    List<PlayingCard> cards(List<SnapshotCard> pile) =>
+        pile.map((c) => c.toPlayingCard()).toList();
+
+    final position = _GameSnapshot(
+      stock: cards(board.stock),
+      waste: cards(board.waste),
+      foundations: board.foundations.map(cards).toList(),
+      tableau: board.tableau.map(cards).toList(),
+      score: board.score,
+      moves: board.moves,
+      freezeCount: board.freezeCount,
+      wandCount: board.wandCount,
+    );
+    _restoreSnapshot(position);
+    _deal = board.deal;
+    _startedFromSnapshot = true;
+    _history.clear();
+    notifyListeners();
   }
 
   // ===== Stock / Waste =====
@@ -103,11 +164,7 @@ class KlondikeGame extends ChangeNotifier {
     }
     if (_stock.isEmpty && _waste.isNotEmpty) {
       _saveSnapshot();
-      while (_waste.isNotEmpty) {
-        final c = _waste.removeLast();
-        c.isFaceUp = false;
-        _stock.add(c);
-      }
+      _recycleWaste();
       _moves++;
       notifyListeners();
     }
@@ -127,160 +184,103 @@ class KlondikeGame extends ChangeNotifier {
       return;
     }
 
-    // Try foundation first
-    if (_tryMoveToFoundation(card, onBeforeMove: _saveSnapshot)) {
-      _moves++;
-      notifyListeners();
-      return;
-    }
-    // Then tableau
-    if (_tryMoveToTableau(card, onBeforeMove: _saveSnapshot)) {
-      _moves++;
-      notifyListeners();
+    if (moveCardToFoundation(card, _foundationIndexForSuit(card.suit))) return;
+    final stack = _stackFrom(card);
+    for (int i = 0; i < _tableau.length; i++) {
+      if (moveStackToTableau(stack, i)) return;
     }
   }
 
   // ===== Public drag/drop helpers =====
 
-  /// Rule check for placing [movingTop] (top of a stack) onto [destTop] (may be null).
-  bool canPlaceOnTableau(PlayingCard? destTop, PlayingCard movingTop) {
-    if (destTop == null) return true; // Relaxed: any card can fill an empty column.
-    return movingTop.rank == destTop.rank - 1; // Relaxed: only descending order required.
+  bool _fitsOnTableau(PlayingCard? parent, PlayingCard child) {
+    if (parent == null) return child.rank == 13;
+    return parent.isFaceUp &&
+        canBuildTableauPair(parent.rank, parent.suit, child.rank, child.suit);
   }
 
-  bool canPlaceOnFoundation(int foundationIndex, PlayingCard moving) {
-    if (foundationIndex < 0 || foundationIndex >= _foundations.length) {
+  bool canPlaceOnTableau(PlayingCard? destTop, PlayingCard movingTop) =>
+      movingTop.isFaceUp && _fitsOnTableau(destTop, movingTop);
+
+  bool _fitsOnFoundation(int index, PlayingCard card) {
+    if (index != _foundationIndexForSuit(card.suit)) return false;
+    final pile = _foundations[index];
+    return card.rank == (pile.isEmpty ? 1 : pile.last.rank + 1);
+  }
+
+  bool canPlaceOnFoundation(int foundationIndex, PlayingCard moving) =>
+      moving.isFaceUp && _fitsOnFoundation(foundationIndex, moving);
+
+  bool canMoveCardToFoundation(PlayingCard card, int foundationIndex) =>
+      canPlaceOnFoundation(foundationIndex, card) &&
+      (identical(wasteTop, card) ||
+          _tableau.any((col) => col.isNotEmpty && identical(col.last, card)));
+
+  /// The exact exposed suffix of its original column, or one accessible
+  /// waste/foundation card. Drag payloads can outlive a move or an undo.
+  bool isMovableRun(List<PlayingCard> stack) {
+    if (stack.isEmpty || !stack.first.isFaceUp) return false;
+    final first = stack.first;
+    final src = _tableauIndexOf(first);
+    if (src == null) {
+      return stack.length == 1 &&
+          (identical(wasteTop, first) ||
+              _foundations.any(
+                (f) => f.isNotEmpty && identical(f.last, first),
+              ));
+    }
+    final col = _tableau[src];
+    final start = col.length - stack.length;
+    if (start < 0 || !identical(col[start], first)) return false;
+    for (int i = 1; i < stack.length; i++) {
+      if (!identical(col[start + i], stack[i]) ||
+          !canPlaceOnTableau(stack[i - 1], stack[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool canMoveStackToTableau(List<PlayingCard> stack, int destCol) {
+    if (destCol < 0 || destCol >= _tableau.length || !isMovableRun(stack)) {
       return false;
     }
-    if (_foundationIndexForSuit(moving.suit) != foundationIndex) {
-      return false;
-    }
-    final dest = _foundations[foundationIndex];
-    if (dest.isEmpty) return moving.rank == 1;
-    final top = dest.last;
-    return top.suit == moving.suit && moving.rank == top.rank + 1;
+    final dest = _tableau[destCol];
+    return !dest.contains(stack.first) &&
+        canPlaceOnTableau(dest.isEmpty ? null : dest.last, stack.first);
   }
 
   bool moveCardToFoundation(PlayingCard card, int foundationIndex) {
-    if (!canPlaceOnFoundation(foundationIndex, card)) {
-      return false;
-    }
+    if (!canMoveCardToFoundation(card, foundationIndex)) return false;
     _saveSnapshot();
-    final expectedTableau = _tableauIndexOf(card);
-    final sourceIdx = _removeFromSource(card);
-    if ((expectedTableau != null && sourceIdx != expectedTableau) ||
-        (expectedTableau == null && sourceIdx != null)) {
-      _restoreLastSnapshotAndNotify();
-      return false;
-    }
+    final source = _removeStack([card]);
     _foundations[foundationIndex].add(card);
     _score += 10;
     _moves++;
-    _maybeFlipAfterRemoval(sourceIdx);
-    if (!_hasConsistentDeckState()) {
-      _restoreLastSnapshotAndNotify();
-      return false;
-    }
-    notifyListeners();
-    return true;
+    _maybeFlipAfterRemoval(source);
+    return _finishMove();
   }
 
-  /// Execute a stack move to a tableau column.
-  /// Handles scoring, flipping, and notifying listeners.
   bool moveStackToTableau(List<PlayingCard> stack, int destCol) {
-    if (stack.isEmpty) return false;
-
-    final movingTop = stack.first;
-    final dest = _tableau[destCol];
-
-    if (!canPlaceOnTableau(dest.isEmpty ? null : dest.last, movingTop)) {
-      return false;
-    }
-
-    final sourceIdx = _tableauIndexOf(movingTop);
-    if (sourceIdx != null && sourceIdx == destCol) {
-      // Dropping back onto the same column should leave the stack untouched.
-      return false;
-    }
-
+    if (!canMoveStackToTableau(stack, destCol)) return false;
     _saveSnapshot();
-    final removedFrom = _removeStack(stack);
-    if ((sourceIdx != null && removedFrom != sourceIdx) ||
-        (sourceIdx != null && removedFrom == null) ||
-        (sourceIdx == null && removedFrom != null)) {
-      _restoreLastSnapshotAndNotify();
-      return false;
-    }
-    _maybeFlipAfterRemoval(removedFrom);
-    dest.addAll(stack);
+    // A caller can pass the source column itself.
+    final cards = List<PlayingCard>.of(stack);
+    final source = _removeStack(cards);
+    _maybeFlipAfterRemoval(source);
+    _tableau[destCol].addAll(cards);
     _score += 3;
     _moves++;
+    return _finishMove();
+  }
+
+  bool _finishMove() {
     if (!_hasConsistentDeckState()) {
       _restoreLastSnapshotAndNotify();
       return false;
     }
     notifyListeners();
     return true;
-  }
-
-  // ===== Foundations =====
-  bool _tryMoveToFoundation(PlayingCard card,
-      {VoidCallback? onBeforeMove}) {
-    final idx = _foundationIndexForSuit(card.suit);
-    final dest = _foundations[idx];
-
-    if (dest.isEmpty) {
-      if (card.rank == 1) {
-        onBeforeMove?.call();
-        final sourceIdx = _removeFromSource(card);
-        dest.add(card);
-        _score += 10;
-        _maybeFlipAfterRemoval(sourceIdx);
-        if (!_hasConsistentDeckState()) {
-          _restoreLastSnapshotAndNotify();
-          return false;
-        }
-        return true;
-      }
-      return false;
-    } else {
-      final top = dest.last;
-      if (top.suit == card.suit && card.rank == top.rank + 1) {
-        onBeforeMove?.call();
-        final sourceIdx = _removeFromSource(card);
-        dest.add(card);
-        _score += 10;
-        _maybeFlipAfterRemoval(sourceIdx);
-        if (!_hasConsistentDeckState()) {
-          _restoreLastSnapshotAndNotify();
-          return false;
-        }
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // ===== Tableau moves (tap auto) =====
-  bool _tryMoveToTableau(PlayingCard card,
-      {VoidCallback? onBeforeMove}) {
-    final stack = _stackFrom(card);
-    for (int i = 0; i < 7; i++) {
-      final dest = _tableau[i];
-      if (canPlaceOnTableau(dest.isEmpty ? null : dest.last, card)) {
-        onBeforeMove?.call();
-        final sourceIdx = _removeStack(stack);
-        dest.addAll(stack);
-        _score += 3;
-        _maybeFlipAfterRemoval(sourceIdx);
-        if (!_hasConsistentDeckState()) {
-          _restoreLastSnapshotAndNotify();
-          return false;
-        }
-        return true;
-      }
-    }
-    return false;
   }
 
   // ===== Helpers =====
@@ -297,22 +297,6 @@ class KlondikeGame extends ChangeNotifier {
     final col = _tableau[tIdx];
     final start = col.indexOf(topCard);
     return List<PlayingCard>.from(col.getRange(start, col.length));
-  }
-
-  int? _removeFromSource(PlayingCard c) {
-    final tIdx = _tableauIndexOf(c);
-    if (tIdx != null) {
-      _tableau[tIdx].remove(c);
-      return tIdx;
-    }
-    if (_waste.isNotEmpty && identical(_waste.last, c)) {
-      _waste.removeLast();
-    }
-    final fIdx = _foundationIndexOf(c);
-    if (fIdx != null && identical(_foundations[fIdx].last, c)) {
-      _foundations[fIdx].removeLast();
-    }
-    return null;
   }
 
   int? _removeStack(List<PlayingCard> stack) {
@@ -371,28 +355,108 @@ class KlondikeGame extends ChangeNotifier {
     final action = _findMagicWandAction();
     if (action == null) return null;
 
-    return MagicWandPlan([action]);
+    return MagicWandPlan._atPosition([action], _position);
   }
 
   bool executeMagicWand(MagicWandPlan plan) {
-    if (plan.actions.isEmpty || wandCount <= 0) return false;
-
-    bool movedAny = false;
-    _saveSnapshot();
-
-    for (final action in plan.actions) {
-      movedAny |= _executeWandAction(action);
-    }
-
-    if (!movedAny) {
-      _history.removeLast();
+    if (wandCount <= 0 ||
+        plan.actions.isEmpty ||
+        (plan._position != null && !identical(plan._position, _position))) {
       return false;
     }
-
+    final first = plan.actions.first;
+    if (!_isLegalWandAction(first)) return false;
+    final before = _captureSnapshot();
+    _applyWandAction(first);
+    for (final action in plan.actions.skip(1)) {
+      if (!_isLegalWandAction(action)) {
+        _restoreSnapshot(before);
+        notifyListeners();
+        return false;
+      }
+      _applyWandAction(action);
+    }
+    _rememberSnapshot(before);
     wandCount--;
     _moves++;
     notifyListeners();
     return true;
+  }
+
+  // A hidden card or either end of a visible run may be extracted. Joining
+  // visible neighbors after taking a card out of the middle would break it.
+  bool _canExtractAt(List<PlayingCard> column, int depth) =>
+      depth == 0 || depth == column.length - 1 || !column[depth - 1].isFaceUp;
+
+  bool _isLegalWandAction(MagicWandAction action) {
+    final from = action.from;
+    final to = action.to;
+    final cards = action.cards;
+    if (action.type == MagicWandActionType.recycleWaste) {
+      return _stock.isEmpty && _waste.isNotEmpty && cards.isEmpty;
+    }
+    if (from == null || cards.isEmpty) return false;
+    final source = switch (from.pile) {
+      WandPileType.stock when from.index == 0 => _stock,
+      WandPileType.waste when from.index == 0 => _waste,
+      WandPileType.tableau
+          when from.index >= 0 && from.index < _tableau.length =>
+        _tableau[from.index],
+      _ => null,
+    };
+    if (source == null ||
+        from.depth < 0 ||
+        from.depth > source.length - cards.length) {
+      return false;
+    }
+    for (int i = 0; i < cards.length; i++) {
+      if (!identical(source[from.depth + i], cards[i])) return false;
+    }
+    final single = cards.length == 1;
+    final card = cards.first;
+    final top = single && from.depth == source.length - 1;
+    final inTableau = from.pile == WandPileType.tableau;
+    if (action.type == MagicWandActionType.flipTableau) {
+      return inTableau && top && !card.isFaceUp;
+    }
+    if (action.type == MagicWandActionType.drawFromStock) {
+      return from.pile == WandPileType.stock &&
+          top &&
+          action.revealOnPickup &&
+          to != null &&
+          to.pile == WandPileType.waste &&
+          to.index == 0 &&
+          to.depth == _waste.length;
+    }
+
+    if (to == null) return false;
+    if (single) {
+      if (inTableau) {
+        if (!_canExtractAt(source, from.depth) ||
+            (!card.isFaceUp && !action.revealOnPickup)) {
+          return false;
+        }
+      } else if (from.pile != WandPileType.waste || !top || !card.isFaceUp) {
+        return false;
+      }
+    } else if (!inTableau || !isMovableRun(cards)) {
+      return false;
+    }
+    if (action.type == MagicWandActionType.moveToFoundation) {
+      return single &&
+          to.pile == WandPileType.foundation &&
+          _fitsOnFoundation(to.index, card) &&
+          to.depth == _foundations[to.index].length;
+    }
+    if (to.pile != WandPileType.tableau ||
+        to.index < 0 ||
+        to.index >= _tableau.length ||
+        (inTableau && from.index == to.index)) {
+      return false;
+    }
+    final dest = _tableau[to.index];
+    return to.depth == dest.length &&
+        _fitsOnTableau(dest.isEmpty ? null : dest.last, card);
   }
 
   MagicWandAction? _findMagicWandAction() {
@@ -477,10 +541,10 @@ class KlondikeGame extends ChangeNotifier {
         final card = column[depth];
         final isBlocked = depth != column.length - 1;
         final isHidden = !card.isFaceUp;
-        if (!isBlocked && !isHidden) continue;
+        if ((!isBlocked && !isHidden) || !_canExtractAt(column, depth)) continue;
 
         final fIdx = _foundationIndexForSuit(card.suit);
-        if (canPlaceOnFoundation(fIdx, card)) {
+        if (_fitsOnFoundation(fIdx, card)) {
           return MagicWandAction(
             type: MagicWandActionType.moveToFoundation,
             cards: [card],
@@ -535,10 +599,13 @@ class KlondikeGame extends ChangeNotifier {
         final card = column[depth];
         if (!card.isFaceUp) continue;
         final stack = List<PlayingCard>.from(column.getRange(depth, column.length));
+        if (!isMovableRun(stack)) continue;
         final movingTop = stack.first;
         for (int dest = 0; dest < _tableau.length; dest++) {
           if (dest == src) continue;
           final destPile = _tableau[dest];
+          // Moving a whole column to an empty slot cannot uncover a card.
+          if (depth == 0 && destPile.isEmpty) continue;
           final destTop = destPile.isEmpty ? null : destPile.last;
           if (canPlaceOnTableau(destTop, movingTop)) {
             return MagicWandAction(
@@ -570,13 +637,13 @@ class KlondikeGame extends ChangeNotifier {
         final card = column[depth];
         final isBlocked = depth != column.length - 1;
         final isHidden = !card.isFaceUp;
-        if (!isBlocked && !isHidden) continue;
+        if ((!isBlocked && !isHidden) || !_canExtractAt(column, depth)) continue;
 
         for (int dest = 0; dest < _tableau.length; dest++) {
           if (dest == src) continue;
           final destPile = _tableau[dest];
           final destTop = destPile.isEmpty ? null : destPile.last;
-          if (canPlaceOnTableau(destTop, card)) {
+          if (_fitsOnTableau(destTop, card)) {
             return MagicWandAction(
               type: MagicWandActionType.moveToTableau,
               cards: [card],
@@ -649,120 +716,48 @@ class KlondikeGame extends ChangeNotifier {
     return null;
   }
 
-  bool _executeWandAction(MagicWandAction action) {
+  /// Only called after checking this action against the current position.
+  void _applyWandAction(MagicWandAction action) {
     switch (action.type) {
       case MagicWandActionType.moveToFoundation:
-        return _executeMoveToFoundation(action);
       case MagicWandActionType.moveToTableau:
-        return _executeMoveToTableau(action);
+        final from = action.from!;
+        final to = action.to!;
+        // A supplied run may be the actual source column.
+        final cards = List<PlayingCard>.of(action.cards);
+        if (from.pile == WandPileType.tableau) {
+          _tableau[from.index].removeRange(
+            from.depth,
+            from.depth + cards.length,
+          );
+          _maybeFlipAfterRemoval(from.index);
+        } else {
+          _waste.removeLast();
+        }
+        if (!cards.first.isFaceUp) {
+          cards.first.isFaceUp = true;
+          _score += 5;
+        }
+        if (to.pile == WandPileType.foundation) {
+          _foundations[to.index].add(cards.single);
+          _score += 10;
+        } else {
+          _tableau[to.index].addAll(cards);
+          _score += 3;
+        }
       case MagicWandActionType.drawFromStock:
-        return _executeDrawFromStock(action);
+        _waste.add(_stock.removeLast()..isFaceUp = true);
       case MagicWandActionType.recycleWaste:
-        return _executeRecycleWaste();
+        _recycleWaste();
       case MagicWandActionType.flipTableau:
-        return _executeFlip(action);
-    }
-  }
-
-  bool _executeMoveToFoundation(MagicWandAction action) {
-    final from = action.from;
-    final to = action.to;
-    if (from == null || to == null) return false;
-    if (!_removeFromLocation(from, action.cards)) return false;
-
-    for (final card in action.cards) {
-      if (action.revealOnPickup && !card.isFaceUp) {
-        card.isFaceUp = true;
+        action.cards.single.isFaceUp = true;
         _score += 5;
-      }
     }
-
-    final dest = _foundations[to.index];
-    dest.addAll(action.cards);
-    _score += 10 * action.cards.length;
-    return true;
   }
 
-  bool _executeMoveToTableau(MagicWandAction action) {
-    final from = action.from;
-    final to = action.to;
-    if (from == null || to == null) return false;
-    if (!_removeFromLocation(from, action.cards)) return false;
-
-    for (final card in action.cards) {
-      if (action.revealOnPickup && !card.isFaceUp) {
-        card.isFaceUp = true;
-        _score += 5;
-      }
-    }
-
-    final dest = _tableau[to.index];
-    dest.addAll(action.cards);
-    _score += 3;
-    return true;
-  }
-
-  bool _executeDrawFromStock(MagicWandAction action) {
-    if (action.cards.isEmpty) return false;
-    final card = action.cards.first;
-    if (!_stock.remove(card)) return false;
-
-    if (action.revealOnPickup && !card.isFaceUp) {
-      card.isFaceUp = true;
-    }
-
-    _waste.add(card);
-    return true;
-  }
-
-  bool _executeRecycleWaste() {
-    if (_waste.isEmpty) return false;
+  void _recycleWaste() {
     while (_waste.isNotEmpty) {
-      final card = _waste.removeLast();
-      card.isFaceUp = false;
-      _stock.add(card);
-    }
-    return true;
-  }
-
-  bool _executeFlip(MagicWandAction action) {
-    if (action.cards.isEmpty) return false;
-    final card = action.cards.first;
-    if (card.isFaceUp) return false;
-    card.isFaceUp = true;
-    _score += 5;
-    return true;
-  }
-
-  bool _removeFromLocation(WandLocation from, List<PlayingCard> cards) {
-    switch (from.pile) {
-      case WandPileType.tableau:
-        final column = _tableau[from.index];
-        if (cards.isEmpty) return false;
-        final first = cards.first;
-        final startIndex = column.indexOf(first);
-        if (startIndex == -1) return false;
-        column.removeRange(startIndex, startIndex + cards.length);
-        _maybeFlipAfterRemoval(from.index);
-        return true;
-      case WandPileType.waste:
-        if (cards.length != 1) return false;
-        if (_waste.isEmpty || !identical(_waste.last, cards.first)) {
-          return false;
-        }
-        _waste.removeLast();
-        return true;
-      case WandPileType.foundation:
-        if (cards.length != 1) return false;
-        final pile = _foundations[from.index];
-        if (pile.isEmpty || !identical(pile.last, cards.first)) {
-          return false;
-        }
-        pile.removeLast();
-        return true;
-      case WandPileType.stock:
-        if (cards.length != 1) return false;
-        return _stock.remove(cards.first);
+      _stock.add(_waste.removeLast()..isFaceUp = false);
     }
   }
 
@@ -866,10 +861,13 @@ class KlondikeGame extends ChangeNotifier {
         final card = column[row];
         if (!card.isFaceUp) continue;
         final stack = column.sublist(row);
+        if (!isMovableRun(stack)) continue;
         final movingTop = stack.first;
         for (int dest = 0; dest < _tableau.length; dest++) {
           if (dest == src) continue;
           final destPile = _tableau[dest];
+          // Moving a whole column to an empty slot cannot uncover a card.
+          if (row == 0 && destPile.isEmpty) continue;
           if (canPlaceOnTableau(
               destPile.isEmpty ? null : destPile.last, movingTop)) {
             final cards = previewOnly
@@ -904,22 +902,22 @@ class KlondikeGame extends ChangeNotifier {
     return true;
   }
 
-  void _saveSnapshot() {
-    _history.add(
-      _GameSnapshot(
-        stock: _clonePile(_stock),
-        waste: _clonePile(_waste),
-        tableau: _tableau.map(_clonePile).toList(),
-        foundations: _foundations.map(_clonePile).toList(),
-        score: _score,
-        moves: _moves,
-        freezeCount: freezeCount,
-        wandCount: wandCount,
-      ),
-    );
-    if (_history.length > _historyLimit) {
-      _history.removeAt(0);
-    }
+  _GameSnapshot _captureSnapshot() => _GameSnapshot(
+    stock: _clonePile(_stock),
+    waste: _clonePile(_waste),
+    tableau: _tableau.map(_clonePile).toList(),
+    foundations: _foundations.map(_clonePile).toList(),
+    score: _score,
+    moves: _moves,
+    freezeCount: freezeCount,
+    wandCount: wandCount,
+  );
+
+  void _saveSnapshot() => _rememberSnapshot(_captureSnapshot());
+
+  void _rememberSnapshot(_GameSnapshot snapshot) {
+    _history.add(snapshot);
+    if (_history.length > _historyLimit) _history.removeAt(0);
   }
 
   void _restoreLastSnapshotAndNotify() {
@@ -1057,7 +1055,10 @@ class MagicWandAction {
 }
 
 class MagicWandPlan {
-  const MagicWandPlan(this.actions);
+  const MagicWandPlan(this.actions) : _position = null;
+  const MagicWandPlan._atPosition(this.actions, this._position);
+
+  final Object? _position;
 
   final List<MagicWandAction> actions;
 }
