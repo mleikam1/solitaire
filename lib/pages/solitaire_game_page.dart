@@ -54,6 +54,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   List<_CardTransfer> _transfers = const [];
   VoidCallback? _pendingAutoPlay;
   bool _settingsOpen = false;
+  bool _newDealDialogOpen = false;
   bool _reduceMotion = false;
   Size? _viewSize;
 
@@ -92,6 +93,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           )
           : null;
 
+  static const _hintsPerDeal = 5;
+  int _hintsRemaining = _hintsPerDeal;
   Timer? _hintTimer;
   HintSuggestion? _activeHint;
   Set<PlayingCard> _hintCards = <PlayingCard>{};
@@ -203,7 +206,39 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     _syncClock();
   }
 
+  Future<void> _confirmNewDeal() async {
+    if (_newDealDialogOpen) return;
+    _newDealDialogOpen = true;
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Reshuffle?'),
+          content: const Text(
+            'This will restart your game and you’ll lose your current progress. '
+            'Is this what you want to do?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('No'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Yes'),
+            ),
+          ],
+        ),
+      );
+      if (mounted && confirmed == true) _newDeal();
+    } finally {
+      _newDealDialogOpen = false;
+      if (mounted) _scheduleAutoPlay();
+    }
+  }
+
   void _newDeal() {
+    _hintsRemaining = _hintsPerDeal;
     _resetTimer();
     game.newDeal();
   }
@@ -247,6 +282,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   void _showHint() {
+    if (_hintsRemaining == 0) return;
     final hint = game.computeHint();
     if (hint == null) {
       if (!mounted) return;
@@ -263,6 +299,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
 
     _hintTimer?.cancel();
     setState(() {
+      _hintsRemaining--;
       _activeHint = hint;
       _hintCards = hint.cards.toSet();
     });
@@ -431,7 +468,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   Widget _buildBoard(BoxConstraints constraints, TableStyle table) {
     final cardWidth = constraints.maxWidth / 8.5;
     final cardHeight = cardWidth * 7 / 5;
-    final hintAvailable = game.hasHintAvailable;
+    final hintAvailable = _hintsRemaining > 0 && game.hasHintAvailable;
     return Column(
       children: [
         const AdBanner(),
@@ -614,13 +651,13 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           ),
         ),
         BottomToolbar(
-          onNewDeal: _newDeal,
+          onNewDeal: _confirmNewDeal,
           onFreeze: game.freezeCount > 0 ? _activateFreeze : null,
           onWand:
               (game.wandCount > 0 && !_isWandAnimating)
                   ? () => _handleWandPressed(cardWidth, cardHeight)
                   : null,
-          onHint: _showHint,
+          onHint: _hintsRemaining > 0 ? _showHint : null,
           onSettings: _openSettings,
           onUndo:
               game.canUndo
@@ -629,6 +666,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           freezeCount: game.freezeCount,
           wandCount: game.wandCount,
           hintAvailable: hintAvailable,
+          hintsRemaining: _hintsRemaining,
         ),
       ],
     );
@@ -731,7 +769,11 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   // another player move invalidates the callback with the old card references.
   void _scheduleAutoPlay() {
     final next = _pendingAutoPlay;
-    if (next == null || !_foreground || _settingsOpen || _travel.isAnimating) {
+    if (next == null ||
+        !_foreground ||
+        _settingsOpen ||
+        _newDealDialogOpen ||
+        _travel.isAnimating) {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -739,6 +781,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           !identical(next, _pendingAutoPlay) ||
           !_foreground ||
           _settingsOpen ||
+          _newDealDialogOpen ||
           _travel.isAnimating) {
         return;
       }
