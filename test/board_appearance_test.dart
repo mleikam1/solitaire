@@ -440,7 +440,7 @@ void main() {
   );
 
   testWidgets(
-    'rapid draws and repeated Undo replace flights; New Deal cancels the current flight',
+    'rapid draws and repeated Undo replace flights; confirmed New Deal cancels the current flight',
     (tester) async {
       final game = await openBoard(tester);
       final original = game.snapshot().encode();
@@ -492,6 +492,11 @@ void main() {
       await tester.pump();
       expect(flight, findsOneWidget);
       await tester.tap(find.byTooltip('New Deal'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(game.moves, 1);
+      expect(flight, findsOneWidget);
+      await tester.tap(find.text('Yes'));
       await tester.pump();
       expect(flight, findsNothing);
       final newDeal = game.snapshot().encode();
