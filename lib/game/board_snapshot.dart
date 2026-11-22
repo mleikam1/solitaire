@@ -31,9 +31,13 @@ final class BoardSnapshot {
     required this.moves,
     required this.freezeCount,
     required this.wandCount,
+    required this.hintsRemaining,
   });
 
+  /// Boards with an untouched hint allowance still use the original format.
   static const int version = 1;
+  static const int _hintVersion = 2;
+  static const int fullHintCount = 5;
   static const int maxJsonLength = 16384;
 
   final DealSpec deal;
@@ -45,6 +49,7 @@ final class BoardSnapshot {
   final int moves;
   final int freezeCount;
   final int wandCount;
+  final int hintsRemaining;
 
   /// Route locally captured and imported boards through the same validator.
   factory BoardSnapshot.capture({
@@ -57,6 +62,7 @@ final class BoardSnapshot {
     required int moves,
     required int freezeCount,
     required int wandCount,
+    int hintsRemaining = fullHintCount,
   }) {
     List<Map<String, Object?>> pack(List<PlayingCard> pile) => [
       for (final card in pile)
@@ -64,7 +70,7 @@ final class BoardSnapshot {
     ];
 
     return BoardSnapshot.fromJson({
-      'version': version,
+      'version': _hintVersion,
       'deal': deal.toJson(),
       'stock': pack(stock),
       'waste': pack(waste),
@@ -74,6 +80,7 @@ final class BoardSnapshot {
       'moves': moves,
       'freezeCount': freezeCount,
       'wandCount': wandCount,
+      'hintsRemaining': hintsRemaining,
     });
   }
 
@@ -85,7 +92,14 @@ final class BoardSnapshot {
   }
 
   factory BoardSnapshot.fromJson(Object? data) {
-    final board = wireObject(data, 'board', const [
+    if (data is! Map<Object?, Object?>) {
+      throw const FormatException('Invalid board snapshot.');
+    }
+    final wireVersion = wireInteger(data['version'], 'version');
+    if (wireVersion != version && wireVersion != _hintVersion) {
+      throw const FormatException('Unsupported board snapshot version.');
+    }
+    final board = wireObject(data, 'board', [
       'version',
       'deal',
       'stock',
@@ -96,10 +110,8 @@ final class BoardSnapshot {
       'moves',
       'freezeCount',
       'wandCount',
+      if (wireVersion == _hintVersion) 'hintsRemaining',
     ]);
-    if (wireInteger(board['version'], 'version') != version) {
-      throw const FormatException('Unsupported board snapshot version.');
-    }
 
     final deal = DealSpec.fromJson(board['deal']);
     final seen = <int>{};
@@ -199,6 +211,13 @@ final class BoardSnapshot {
         'wandCount',
         max: DealSpec.maxInventory,
       ),
+      hintsRemaining: wireVersion == version
+          ? fullHintCount
+          : wireInteger(
+              board['hintsRemaining'],
+              'hintsRemaining',
+              max: fullHintCount,
+            ),
     );
   }
 
@@ -208,7 +227,7 @@ final class BoardSnapshot {
     ];
 
     return {
-      'version': version,
+      'version': hintsRemaining == fullHintCount ? version : _hintVersion,
       'deal': deal.toJson(),
       'stock': pack(stock),
       'waste': pack(waste),
@@ -218,6 +237,7 @@ final class BoardSnapshot {
       'moves': moves,
       'freezeCount': freezeCount,
       'wandCount': wandCount,
+      if (hintsRemaining != fullHintCount) 'hintsRemaining': hintsRemaining,
     };
   }
 

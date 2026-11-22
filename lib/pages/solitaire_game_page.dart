@@ -53,7 +53,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
       game.isWon && _transfers.isEmpty && !_isWandAnimating;
   List<_CardTransfer> _transfers = const [];
   VoidCallback? _pendingAutoPlay;
-  bool _settingsOpen = false;
+  bool _boardModalOpen = false;
   bool _reduceMotion = false;
   Size? _viewSize;
 
@@ -208,6 +208,33 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     game.newDeal();
   }
 
+  Future<void> _confirmNewDeal() async {
+    final confirmed = await _showBoardModal<bool>(
+      (context) => showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Reshuffle this game?'),
+          content: const Text(
+            'this will restart your game and you’ll lose your current progress. '
+            'Is this what you want to do?',
+          ),
+          actions: [
+            TextButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('No'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Yes'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true && mounted) _newDeal();
+  }
+
   String _formatTime() {
     final e = Duration(milliseconds: _elapsedMs);
     final m = e.inMinutes.toString().padLeft(2, '0');
@@ -247,7 +274,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   }
 
   void _showHint() {
-    final hint = game.computeHint();
+    if (game.hintsRemaining == 0) return;
+    final hint = game.useHint();
     if (hint == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -431,7 +459,7 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   Widget _buildBoard(BoxConstraints constraints, TableStyle table) {
     final cardWidth = constraints.maxWidth / 8.5;
     final cardHeight = cardWidth * 7 / 5;
-    final hintAvailable = game.hasHintAvailable;
+    final hintsRemaining = game.hintsRemaining;
     return Column(
       children: [
         const AdBanner(),
@@ -614,13 +642,13 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
           ),
         ),
         BottomToolbar(
-          onNewDeal: _newDeal,
+          onNewDeal: _confirmNewDeal,
           onFreeze: game.freezeCount > 0 ? _activateFreeze : null,
           onWand:
               (game.wandCount > 0 && !_isWandAnimating)
                   ? () => _handleWandPressed(cardWidth, cardHeight)
                   : null,
-          onHint: _showHint,
+          onHint: hintsRemaining > 0 ? _showHint : null,
           onSettings: _openSettings,
           onUndo:
               game.canUndo
@@ -628,7 +656,8 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
                   : null,
           freezeCount: game.freezeCount,
           wandCount: game.wandCount,
-          hintAvailable: hintAvailable,
+          hintsRemaining: hintsRemaining,
+          hintAvailable: hintsRemaining > 0 && game.hasHintAvailable,
         ),
       ],
     );
@@ -714,13 +743,17 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
     return null;
   }
 
-  Future<void> _openSettings() async {
+  Future<void> _openSettings() => _showBoardModal<void>(showAppearancePanel);
+
+  // Suspend queued automatic moves while a player is making a modal choice.
+  Future<T?> _showBoardModal<T>(Future<T?> Function(BuildContext) show) async {
+    if (_boardModalOpen) return null;
+    _boardModalOpen = true;
     _wandFlight.stop();
-    _settingsOpen = true;
     try {
-      await showAppearancePanel(context);
+      return await show(context);
     } finally {
-      _settingsOpen = false;
+      _boardModalOpen = false;
       if (mounted) _scheduleAutoPlay();
     }
   }
@@ -731,14 +764,14 @@ class SolitaireGamePageState extends State<SolitaireGamePage>
   // another player move invalidates the callback with the old card references.
   void _scheduleAutoPlay() {
     final next = _pendingAutoPlay;
-    if (next == null || !_foreground || _settingsOpen || _travel.isAnimating) {
+    if (next == null || !_foreground || _boardModalOpen || _travel.isAnimating) {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           !identical(next, _pendingAutoPlay) ||
           !_foreground ||
-          _settingsOpen ||
+          _boardModalOpen ||
           _travel.isAnimating) {
         return;
       }

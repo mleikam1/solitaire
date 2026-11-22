@@ -4,11 +4,12 @@ class BottomToolbar extends StatelessWidget {
   final VoidCallback onNewDeal;
   final VoidCallback? onFreeze;
   final VoidCallback? onWand;
-  final VoidCallback onHint;
+  final VoidCallback? onHint;
   final VoidCallback onSettings;
   final VoidCallback? onUndo;
   final int freezeCount;
   final int wandCount;
+  final int hintsRemaining;
   final bool hintAvailable;
 
   const BottomToolbar({
@@ -21,6 +22,7 @@ class BottomToolbar extends StatelessWidget {
     required this.onUndo,
     required this.freezeCount,
     required this.wandCount,
+    required this.hintsRemaining,
     required this.hintAvailable,
   });
 
@@ -58,7 +60,9 @@ class BottomToolbar extends StatelessWidget {
               icon: Icons.lightbulb_outline,
               tooltip: 'Hint',
               onPressed: onHint,
+              badge: 'x$hintsRemaining',
               showAsEnabled: hintAvailable,
+              disabledBackgroundColor: const Color(0xFF565C58),
             ),
             _buildToolbarIconButton(
               icon: Icons.auto_fix_high,
@@ -79,6 +83,7 @@ class BottomToolbar extends StatelessWidget {
     required VoidCallback? onPressed,
     String? badge,
     bool? showAsEnabled,
+    Color? disabledBackgroundColor,
   }) {
     final bool interactable = onPressed != null;
     final bool effectiveEnabled = (showAsEnabled ?? interactable) && interactable;
@@ -106,6 +111,7 @@ class BottomToolbar extends StatelessWidget {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: backgroundColor,
+                    disabledBackgroundColor: disabledBackgroundColor,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
@@ -128,8 +134,10 @@ class BottomToolbar extends StatelessWidget {
                     ),
                     child: Text(
                       badge,
-                      style: const TextStyle(
-                        color: Color(0xFF2E7D32),
+                      style: TextStyle(
+                        color: interactable
+                            ? const Color(0xFF2E7D32)
+                            : Colors.grey.shade700,
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                       ),

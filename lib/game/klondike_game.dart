@@ -38,6 +38,8 @@ class KlondikeGame extends ChangeNotifier {
   // Power-ups
   int freezeCount = 2;
   int wandCount = 3;
+  late int _hintsRemaining;
+  int get hintsRemaining => _hintsRemaining;
 
   final List<_GameSnapshot> _history = [];
   static const int _historyLimit = 200;
@@ -86,6 +88,7 @@ class KlondikeGame extends ChangeNotifier {
     _startedFromSnapshot = false;
     freezeCount = deal.initialFreezeCount;
     wandCount = deal.initialWandCount;
+    _hintsRemaining = BoardSnapshot.fullHintCount;
     _history.clear();
     _stock.clear();
     _waste.clear();
@@ -128,6 +131,7 @@ class KlondikeGame extends ChangeNotifier {
     moves: _moves,
     freezeCount: freezeCount,
     wandCount: wandCount,
+    hintsRemaining: _hintsRemaining,
   );
 
   /// Install a validated position, with this position as the undo boundary.
@@ -146,6 +150,7 @@ class KlondikeGame extends ChangeNotifier {
       wandCount: board.wandCount,
     );
     _restoreSnapshot(position);
+    _hintsRemaining = board.hintsRemaining;
     _deal = board.deal;
     _startedFromSnapshot = true;
     _history.clear();
@@ -837,6 +842,15 @@ class KlondikeGame extends ChangeNotifier {
   }
 
   HintSuggestion? computeHint() => _computeHint();
+
+  /// Spend one hint only when the board can supply a suggestion. Asking for
+  /// help leaves card positions, planned moves and undo history intact.
+  HintSuggestion? useHint() {
+    if (_hintsRemaining == 0) return null;
+    final hint = computeHint();
+    if (hint != null) _hintsRemaining--;
+    return hint;
+  }
 
   bool get hasHintAvailable => _computeHint(previewOnly: true) != null;
 

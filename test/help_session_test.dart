@@ -296,6 +296,9 @@ void main() {
     expect(helper.game.undo(), isTrue);
     expect(helper.game.startedFromSnapshot, isTrue);
     await tester.tap(find.widgetWithIcon(ElevatedButton, Icons.shuffle));
+    await tester.pumpAndSettle();
+    expect(helper.game.startedFromSnapshot, isTrue);
+    await tester.tap(find.text('Yes'));
     await tester.pump();
     expect(helper.game.startedFromSnapshot, isFalse);
     expect(helper.captureHelp().elapsedMilliseconds, 0);
