@@ -4,12 +4,13 @@ class BottomToolbar extends StatelessWidget {
   final VoidCallback onNewDeal;
   final VoidCallback? onFreeze;
   final VoidCallback? onWand;
-  final VoidCallback onHint;
+  final VoidCallback? onHint;
   final VoidCallback onSettings;
   final VoidCallback? onUndo;
   final int freezeCount;
   final int wandCount;
   final bool hintAvailable;
+  final int hintsRemaining;
 
   const BottomToolbar({
     super.key,
@@ -22,6 +23,7 @@ class BottomToolbar extends StatelessWidget {
     required this.freezeCount,
     required this.wandCount,
     required this.hintAvailable,
+    required this.hintsRemaining,
   });
 
   @override
@@ -58,6 +60,7 @@ class BottomToolbar extends StatelessWidget {
               icon: Icons.lightbulb_outline,
               tooltip: 'Hint',
               onPressed: onHint,
+              badge: 'x$hintsRemaining',
               showAsEnabled: hintAvailable,
             ),
             _buildToolbarIconButton(
