@@ -493,12 +493,82 @@ void main() {
       expect(flight, findsOneWidget);
       await tester.tap(find.byTooltip('New Deal'));
       await tester.pump();
+      expect(game.moves, 1);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Yes'));
+      await tester.pumpAndSettle();
       expect(flight, findsNothing);
       final newDeal = game.snapshot().encode();
       await tester.pump(CardFlight.drawDuration * 2);
       expect(game.snapshot().encode(), newDeal);
       expect(game.moves, 0);
       expect(game.canUndo, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: desktop,
+  );
+
+  testWidgets(
+    'canceling a reshuffle preserves progress and only a new deal refills hints',
+    (tester) async {
+      final game = await openBoard(tester);
+      final hint = find.widgetWithIcon(ElevatedButton, Icons.lightbulb_outline);
+      final shuffle = find.byTooltip('New Deal');
+      bool hintEnabled() => tester.widget<ElevatedButton>(hint).enabled;
+      Future<void> useHint(int remaining) async {
+        expect(hintEnabled(), isTrue);
+        await tester.tap(hint);
+        await tester.pump();
+        expect(
+          find.descendant(
+            of: find.byTooltip('Hint'),
+            matching: find.text('x$remaining'),
+          ),
+          findsOneWidget,
+        );
+      }
+
+      await tester.tap(cardWidgets(game.stockTop!.id));
+      await tester.pumpAndSettle();
+      for (var remaining = 4; remaining >= 1; remaining--) {
+        await useHint(remaining);
+      }
+      final inProgress = game.snapshot().encode();
+      await tester.tap(shuffle);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'this will restart your game and you’ll lose your current progress. '
+          'Is this what you want to do?',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('No'));
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), inProgress);
+      expect(game.canUndo, isTrue);
+
+      await tester.tap(shuffle);
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(game.snapshot().encode(), inProgress);
+      await useHint(0);
+      expect(hintEnabled(), isFalse);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(game.moves, 0);
+      expect(hintEnabled(), isFalse);
+
+      await tester.tap(shuffle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Yes'));
+      await tester.pumpAndSettle();
+      expect(game.canUndo, isFalse);
+      for (var remaining = 4; remaining >= 0; remaining--) {
+        await useHint(remaining);
+      }
+      expect(hintEnabled(), isFalse);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: desktop,

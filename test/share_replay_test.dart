@@ -184,7 +184,57 @@ void main() {
     );
   });
 
-  group('v1 snapshot import', () {
+  group('per-game hints', () {
+    test('only delivered hints count, without moves, undo or notifications', () {
+      final game = _newGame(1);
+      var notifications = 0;
+      game.addListener(() => notifications++);
+      for (var remaining = 5; remaining > 0; remaining--) {
+        expect(game.hasHintAvailable, isTrue);
+        expect(game.computeHint(), isNotNull);
+        expect(game.hintsRemaining, remaining);
+        expect(game.useHint(), isNotNull);
+      }
+      expect(game.useHint(), isNull);
+      expect(game.hintsRemaining, 0);
+      expect(game.moves, 0);
+      expect(game.score, 0);
+      expect(game.canUndo, isFalse);
+      expect(notifications, 0);
+    });
+
+    test('a board handoff retains spent hints and a new deal gets five', () {
+      final owner = _newGame(1);
+      final legacy = _wire(owner);
+      expect(legacy['version'], 1);
+      expect(legacy.containsKey('hintsRemaining'), isFalse);
+      final helper = KlondikeGame.fromSnapshot(BoardSnapshot.fromJson(legacy));
+      expect(helper.hintsRemaining, 5);
+
+      owner.drawFromStock();
+      owner.useHint();
+      expect(owner.undo(), isTrue);
+      expect(owner.hintsRemaining, 4);
+      final partial = _wire(owner);
+      expect(partial['version'], 2);
+      expect(partial['hintsRemaining'], 4);
+      helper.restoreBoard(BoardSnapshot.fromJson(partial));
+      for (var i = 0; i < 4; i++) {
+        expect(helper.useHint(), isNotNull);
+      }
+      expect(helper.useHint(), isNull);
+      expect(owner.hintsRemaining, 4);
+      final exhausted = BoardSnapshot.decode(helper.snapshot().encode());
+      expect(KlondikeGame.fromSnapshot(exhausted).useHint(), isNull);
+
+      helper.newDeal();
+      expect(helper.hintsRemaining, 5);
+      owner.startDeal(owner.deal);
+      expect(_wire(owner), legacy);
+    });
+  });
+
+  group('snapshot import', () {
     test(
       'restoring on an existing game drops only its previous undo history',
       () {
@@ -237,6 +287,8 @@ void main() {
       expect(copy.isWon, isFalse);
       expect(copy.moveCardToFoundation(copy.wasteTop!, 3), isTrue);
       expect(copy.isWon, isTrue);
+      expect(copy.useHint(), isNull);
+      expect(copy.hintsRemaining, 5);
       expect(copy.snapshot().foundations, everyElement(hasLength(13)));
       expect(copy.moves, 108);
       expect(copy.wasteTop, isNull);
@@ -246,7 +298,13 @@ void main() {
     });
 
     final corruptions = <String, void Function(WireMap)>{
-      'unknown snapshot version': (m) => m['version'] = 2,
+      'unknown snapshot version': (m) => m['version'] = 3,
+      'missing v2 hint balance': (m) => m['version'] = 2,
+      'extra v1 hint balance': (m) => m['hintsRemaining'] = 4,
+      'invalid v2 hint balance': (m) {
+        m['version'] = 2;
+        m['hintsRemaining'] = 6;
+      },
       'unknown generator version': (m) => m['deal']['version'] = 2,
       'retired relaxed game rules':
           (m) => m['deal']['rules'] = 'relaxed-draw1-v1',
